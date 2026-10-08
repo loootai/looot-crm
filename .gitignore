@@ -1,0 +1,11 @@
+node_modules/
+.next/
+*.tgz
+npm-debug.log*
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage/
+next-env.d.ts
+tsconfig.tsbuildinfo

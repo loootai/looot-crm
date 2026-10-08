@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Runs the leak scanner before every commit. Turn it on once per clone:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+# Demo and test fixtures use addresses on the reserved .example domain. They belong to nobody.
+LEAK_SCAN_ALLOWED_EMAILS='[.]example$' exec bash "$root/scripts/leak-scan.sh" "$root"
