@@ -14,6 +14,13 @@ export function usd2(n: number | null | undefined): string {
   return `$${v.toFixed(2)}`;
 }
 
+/** A cap in dollars: 2 decimals when that is exact ($0.02), up to 4 when it is not ($0.005), so a cap is never shown rounded up. */
+export function usdCap(n: number | null | undefined): string {
+  const v = Math.round(((n ?? 0) + 1e-9) * 1e4) / 1e4;
+  const s = v.toFixed(4).replace(/0{1,2}$/, "");
+  return `$${s}`;
+}
+
 const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 /** Whole dollars from cents ($84,000). */
 export function money(cents: number): string {

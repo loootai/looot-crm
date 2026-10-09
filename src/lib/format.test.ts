@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanDomain, dueLabel, initials, money, relative, usd2, usd4 } from "./format";
+import { cleanDomain, dueLabel, initials, money, relative, usd2, usd4, usdCap } from "./format";
 
 describe("format", () => {
   it("rounds prices half up", () => {
@@ -7,6 +7,14 @@ describe("format", () => {
     expect(usd4(0.02544)).toBe("$0.0254");
     expect(usd2(0.1)).toBe("$0.10");
     expect(usd4(null)).toBe("$0.0000");
+  });
+  it("never shows a cap rounded up", () => {
+    expect(usdCap(0.005)).toBe("$0.005");
+    expect(usdCap(0.02)).toBe("$0.02");
+    expect(usdCap(0.1)).toBe("$0.10");
+    expect(usdCap(0.13)).toBe("$0.13");
+    expect(usdCap(0.0295)).toBe("$0.0295");
+    expect(usdCap(2)).toBe("$2.00");
   });
   it("formats deal money from cents", () => {
     expect(money(62_750_000)).toBe("$627,500");

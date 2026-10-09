@@ -4,14 +4,14 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, Check, CircleDashed, Loader2, Minus, RotateCw, X } from "lucide-react";
+import { AlertTriangle, Check, CircleDashed, CircleSlash, Loader2, Minus, RotateCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Candidate } from "@/lib/apply";
-import { relative, usd2, usd4 } from "@/lib/format";
+import { relative, usd4, usdCap } from "@/lib/format";
 import type { QuoteRow, StepId } from "@/lib/plan";
 import type { Action, ActionKind, Run } from "@/lib/types";
 
@@ -20,6 +20,8 @@ export interface QuoteRequest {
   targetIds: string[];
   steps?: StepId[];
   options?: { keywords?: string[]; limit?: number };
+  /** Close the dialog when the action ends and report the spend in a toast. For actions whose result opens its own dialog. */
+  closeOnDone?: boolean;
   /** Called when the action has ended, with the people found for a find_people action. */
   onDone?: (result: { action: Action; runs: Run[]; candidates?: Candidate[] }) => void;
 }
@@ -170,7 +172,9 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
       setPhase("done");
       router.refresh();
       req.onDone?.(body);
-      if (!openRef.current) toast(`${quote.title}: spent ${usd4(body.action.actual_usd)} of ${usd2(body.action.max_cost_usd)}`, { description: summary(body.runs) });
+      const wasOpen = openRef.current;
+      if (wasOpen && req.closeOnDone) close();
+      if (!wasOpen || req.closeOnDone) toast(`${quote.title}: spent ${usd4(body.action.actual_usd)} of ${usdCap(body.action.max_cost_usd)}`, { description: summary(body.runs) });
     } catch (e) {
       stop = true;
       setError(e instanceof Error && e.message !== "Failed to fetch" ? e.message : "The network request failed. Retrying uses the same action id, so nothing is charged twice.");
@@ -183,7 +187,7 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
     openRef.current = false;
     onClose();
   };
-  const runLabel = quote?.demo ? "Run (demo, no charge)" : `Run for up to ${usd2(effMax)}`;
+  const runLabel = quote?.demo ? "Run (demo, no charge)" : `Run for up to ${usdCap(effMax)}`;
   const ran = phase === "running" || phase === "done" || (phase === "error" && runs.length > 0);
 
   return (
@@ -246,7 +250,7 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
                             <td className="hidden h-10 border-t border-border px-2 font-mono text-xs sm:table-cell">{r.jobId}</td>
                             <td className="tnum hidden h-10 border-t border-border px-2 text-right sm:table-cell">{r.runs}</td>
                             <td className="tnum h-10 border-t border-border px-2 text-right font-mono text-xs">{ran ? <StepResult runs={mine} total={r.runs} skipped={!checked} /> : usd4(r.estimate)}</td>
-                            <td className="tnum h-10 border-t border-border pl-2 pr-5 text-right font-mono text-xs text-muted-foreground">{usd2(r.cap)}</td>
+                            <td className="tnum h-10 border-t border-border pl-2 pr-5 text-right font-mono text-xs text-muted-foreground">{usdCap(r.cap)}</td>
                           </tr>
                         );
                       })}
@@ -260,7 +264,7 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
                     <p className="text-13">
                       Estimated <span className="tnum font-mono font-medium">{usd4(estimate)}</span>
                       <span className="text-muted-foreground"> · worst case </span>
-                      <span className="tnum font-mono text-muted-foreground">{usd2(worst)}</span>
+                      <span className="tnum font-mono text-muted-foreground">{usdCap(worst)}</span>
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {quote.priceSource === "catalog" ? `Prices from the looot catalog, read ${relative(quote.priceReadAt)}.` : `Catalog unreachable, using prices saved on ${quote.priceReadAt}.`} A failed run costs nothing.
@@ -289,7 +293,7 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
                     </div>
                   </div>
                   <p id="quote-max-note" className="text-xs sm:col-span-2" aria-live="polite">
-                    {blocked && rows.length > 0 ? <span className="text-danger">{blocked}</span> : overCeiling ? <span className="text-warning">Limited to {usd2(quote.ceiling)} per action by your spending limit.</span> : <span className="text-muted-foreground">Each run is capped. When the max cannot cover the next step, the action stops.</span>}
+                    {blocked && rows.length > 0 ? <span className="text-danger">{blocked}</span> : overCeiling ? <span className="text-warning">Limited to {usdCap(quote.ceiling)} per action by your spending limit.</span> : <span className="text-muted-foreground">Each run is capped. When the max cannot cover the next step, the action stops.</span>}
                   </p>
                 </div>
               )}
@@ -298,13 +302,13 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
                   {phase === "running" && (
                     <p className="flex items-center gap-2 text-13">
                       <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden />
-                      Spent <span className="tnum font-mono">{usd4(action?.actual_usd ?? 0)}</span> of <span className="tnum font-mono">{usd2(effMax)}</span> so far
+                      Spent <span className="tnum font-mono">{usd4(action?.actual_usd ?? 0)}</span> of <span className="tnum font-mono">{usdCap(effMax)}</span> so far
                     </p>
                   )}
                   {phase === "done" && action && (
                     <>
                       <p className="text-13 font-medium">
-                        Spent <span className="tnum font-mono">{usd4(action.actual_usd)}</span> of <span className="tnum font-mono">{usd2(action.max_cost_usd)}</span>. {summary(runs)}
+                        Spent <span className="tnum font-mono">{usd4(action.actual_usd)}</span> of <span className="tnum font-mono">{usdCap(action.max_cost_usd)}</span>. {summary(runs)}
                       </p>
                       {action.status === "stopped_at_max" && <p className="mt-1 text-13 text-warning">Stopped at your max. The steps left were not run and cost nothing.</p>}
                       {runs.find((x) => x.error) && <p className="mt-1 text-13 text-danger">{runs.find((x) => x.error)!.error} $0.</p>}
@@ -360,6 +364,8 @@ function StepIcon({ runs, total, skipped }: { runs: Run[]; total: number; skippe
   if (runs.length < total) return <Loader2 className="size-4 animate-spin text-primary" aria-hidden />;
   if (runs.every((r) => r.outcome === "failed")) return <X className="size-4 text-danger" aria-hidden />;
   if (runs.every((r) => r.outcome === "skipped")) return <Minus className="size-4 text-warning" aria-hidden />;
+  // A check mark only when something came back. A run that found nothing is not a success.
+  if (!runs.some((r) => r.outcome === "data")) return <CircleSlash className="size-4 text-muted-foreground" aria-hidden />;
   return <Check className="size-4 text-accent" aria-hidden />;
 }
 

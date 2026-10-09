@@ -4,7 +4,7 @@ import * as React from "react";
 import { ChevronRight, Copy } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Td } from "@/components/ui/table";
-import { clock, shortDate, usd2, usd4 } from "@/lib/format";
+import { clock, shortDate, usd4, usdCap } from "@/lib/format";
 import type { SpendData } from "@/lib/queries";
 import type { ActionKind, ActionStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -28,7 +28,7 @@ export function ActionRow({ action }: { action: SpendData["actions"][number] }) 
     <>
       <tr className={cn("cursor-pointer transition-colors duration-100 hover:bg-muted", over && "bg-danger-bg")} onClick={() => setOpen((v) => !v)}>
         <Td className="w-9 pr-0">
-          <button aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} the ${action.runs.length} runs of this action`} className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-border" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+          <button aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} the ${action.runs.length === 1 ? "run" : `${action.runs.length} runs`} of this action`} className="grid size-6 place-items-center rounded-sm text-muted-foreground hover:bg-border" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
             <ChevronRight className={cn("size-4 transition-transform duration-100", open && "rotate-90")} />
           </button>
         </Td>
@@ -37,7 +37,7 @@ export function ActionRow({ action }: { action: SpendData["actions"][number] }) 
         <Td className="max-w-64 truncate">{action.target_label ?? `${action.target_count} records`}</Td>
         <Td className="tnum text-right">{action.runs.length}</Td>
         <Td className="tnum text-right font-mono text-xs text-muted-foreground">{usd4(action.estimate_usd)}</Td>
-        <Td className="tnum text-right font-mono text-xs text-muted-foreground">{usd2(action.max_cost_usd)}</Td>
+        <Td className="tnum text-right font-mono text-xs text-muted-foreground">{usdCap(action.max_cost_usd)}</Td>
         <Td className="tnum text-right font-mono text-xs font-medium">{usd4(action.actual_usd)}</Td>
         <Td><Badge tone={STATUS[action.status].tone}>{STATUS[action.status].label}</Badge></Td>
       </tr>

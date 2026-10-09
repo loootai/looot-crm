@@ -9,10 +9,47 @@ export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogClose = DialogPrimitive.Close;
 
+/**
+ * Remembers what had focus when an overlay opened and hands focus back when it closes.
+ * Radix only returns focus to a DialogTrigger, and every overlay here is opened from state
+ * (a button's onClick, a shortcut, a URL), so without this focus would drop to <body>.
+ */
+function useReturnFocus(onCloseAutoFocus?: (event: Event) => void) {
+  const opener = React.useRef<HTMLElement | null>(null);
+  const remember = React.useCallback(() => {
+    const el = document.activeElement;
+    opener.current = el instanceof HTMLElement && el !== document.body ? el : null;
+  }, []);
+  const giveBack = React.useCallback(
+    (event: Event) => {
+      onCloseAutoFocus?.(event);
+      const el = opener.current;
+      if (event.defaultPrevented || !el || !el.isConnected) return;
+      event.preventDefault();
+      el.focus();
+    },
+    [onCloseAutoFocus],
+  );
+  return { remember, giveBack };
+}
+
+/** Mounts with the overlay content, before Radix moves focus into it. */
+function RememberOpener({ remember }: { remember: () => void }) {
+  // Once per mount. Strict mode runs effects twice, and by the second run focus is already inside the overlay.
+  const done = React.useRef(false);
+  React.useLayoutEffect(() => {
+    if (done.current) return;
+    done.current = true;
+    remember();
+  }, [remember]);
+  return null;
+}
+
 const overlay = "fixed inset-0 z-50 bg-[#06150f]/45 animate-in dark:bg-black/60";
 
 /** `top` puts the dialog above an open sheet. The quote dialog uses it. */
-export function DialogContent({ className, children, hideClose, top, ...props }: React.ComponentProps<typeof DialogPrimitive.Content> & { hideClose?: boolean; top?: boolean }) {
+export function DialogContent({ className, children, hideClose, top, onCloseAutoFocus, ...props }: React.ComponentProps<typeof DialogPrimitive.Content> & { hideClose?: boolean; top?: boolean }) {
+  const { remember, giveBack } = useReturnFocus(onCloseAutoFocus);
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className={cn(overlay, top && "z-[60]")} />
@@ -23,7 +60,9 @@ export function DialogContent({ className, children, hideClose, top, ...props }:
           className,
         )}
         {...props}
+        onCloseAutoFocus={giveBack}
       >
+        <RememberOpener remember={remember} />
         {children}
         {!hideClose && (
           <DialogPrimitive.Close className="absolute right-3 top-3 grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close">
@@ -36,11 +75,13 @@ export function DialogContent({ className, children, hideClose, top, ...props }:
 }
 
 /** Side panel. Slides from the right, full screen under 640 px. */
-export function SheetContent({ className, children, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+export function SheetContent({ className, children, onCloseAutoFocus, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+  const { remember, giveBack } = useReturnFocus(onCloseAutoFocus);
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className={overlay} />
-      <DialogPrimitive.Content className={cn("fixed inset-y-0 right-0 z-50 flex w-full animate-sheet flex-col border-l border-border bg-raised shadow-overlay sm:max-w-[480px]", className)} {...props}>
+      <DialogPrimitive.Content className={cn("fixed inset-y-0 right-0 z-50 flex w-full animate-sheet flex-col border-l border-border bg-raised shadow-overlay sm:max-w-[480px]", className)} {...props} onCloseAutoFocus={giveBack}>
+        <RememberOpener remember={remember} />
         {children}
         <DialogPrimitive.Close className="absolute right-3 top-3 grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground max-sm:size-10" aria-label="Close">
           <X className="size-4" />

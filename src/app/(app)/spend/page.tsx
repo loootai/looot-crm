@@ -5,7 +5,7 @@ import { EmptyState, ErrorPanel, Page, SectionTitle } from "@/components/common"
 import { ActionRow } from "@/components/spend-client";
 import { LinkButton } from "@/components/today-client";
 import { Table, Th } from "@/components/ui/table";
-import { clock, usd2, usd4 } from "@/lib/format";
+import { clock, usd4, usdCap } from "@/lib/format";
 import { FALLBACK_DATE } from "@/lib/jobs";
 import { fetchPrices } from "@/lib/prices";
 import { priceTable, SPEND_GROUPS, spendData } from "@/lib/queries";
@@ -63,7 +63,7 @@ export default async function SpendPage({ searchParams }: { searchParams: Promis
                 {SPEND_GROUPS.map((g, i) => <li key={g} className="flex items-center gap-1.5"><RampDot i={i} />{g}</li>)}
               </ul>
             }>
-              <span id="chart-h">Spend per day</span>
+              <span id="chart-h" className="whitespace-nowrap">Spend per day</span>
             </SectionTitle>
             <div className="mt-3"><SpendChart days={data.days} groups={SPEND_GROUPS} /></div>
           </section>
@@ -110,7 +110,7 @@ export default async function SpendPage({ searchParams }: { searchParams: Promis
                   <td className="h-9 border-b border-border px-3">{r.feature}</td>
                   <td className="h-9 border-b border-border px-3 font-mono text-xs">{r.id}</td>
                   <td className="tnum h-9 border-b border-border px-3 text-right font-mono text-xs">{usd4(r.quote)}{r.results > 1 && <span className="text-muted-foreground"> / {r.results} results</span>}</td>
-                  <td className="tnum h-9 border-b border-border px-3 text-right font-mono text-xs text-muted-foreground">{usd2(r.cap)}</td>
+                  <td className="tnum h-9 border-b border-border px-3 text-right font-mono text-xs text-muted-foreground">{usdCap(r.cap)}</td>
                 </tr>
               ))}
             </tbody>
