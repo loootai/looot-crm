@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { closestCorners, DndContext, DragOverlay, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { closestCorners, DndContext, DragOverlay, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors, type Announcements, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AlertTriangle, CalendarDays, ChevronsLeftRight, Ellipsis, KanbanSquare, Plus, Rows3 } from "lucide-react";
@@ -20,6 +20,25 @@ import type { DealCard } from "@/lib/queries";
 import { STAGE_LABEL, STAGES, type Stage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CloseDealDialog, DealSheet, NewDealDialog } from "./DealView";
+
+/**
+ * Arrow keys while a card is picked up. Up and down keep the sortable behaviour (move inside the
+ * stage). Left and right jump to the next stage, which the sortable getter cannot do across lists.
+ */
+const boardKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
+  if (event.code !== "ArrowLeft" && event.code !== "ArrowRight") return sortableKeyboardCoordinates(event, args);
+  const { collisionRect, droppableRects } = args.context;
+  if (!collisionRect) return undefined;
+  const columns = STAGES.map((s) => droppableRects.get(`col:${s}`)).filter((r): r is NonNullable<typeof r> => !!r).sort((a, b) => a.left - b.left);
+  const center = collisionRect.left + collisionRect.width / 2;
+  const here = columns.findIndex((r) => center >= r.left && center <= r.right);
+  const from = here === -1 ? columns.findIndex((r) => r.left > center) - (event.code === "ArrowRight" ? 1 : 0) : here;
+  const next = columns[from + (event.code === "ArrowRight" ? 1 : -1)];
+  if (!next) return undefined;
+  event.preventDefault();
+  // Centre the card on the stage, also when the stage is a narrow collapsed rail.
+  return { x: next.left + (next.width - collisionRect.width) / 2, y: next.top + 4 };
+};
 
 const MONTH = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
@@ -83,7 +102,25 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
     });
   };
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  /**
+   * The stage under the pointer (or under the middle of the card when moved by keyboard) wins, then
+   * the nearest card inside it. Plain closestCorners picks a wide card next door over a 104 px rail,
+   * so a card could not be dropped on collapsed Won or Lost.
+   */
+  const collision: CollisionDetection = (args) => {
+    const x = args.pointerCoordinates?.x ?? args.collisionRect.left + args.collisionRect.width / 2;
+    const column = args.droppableContainers.find((c) => {
+      const r = String(c.id).startsWith("col:") ? args.droppableRects.get(c.id) : undefined;
+      return !!r && x >= r.left && x <= r.right;
+    });
+    if (!column) return closestCorners(args);
+    const stage = String(column.id).slice(4);
+    const inStage = args.droppableContainers.filter((c) => c.id === column.id || deals.find((d) => d.id === c.id)?.stage === stage);
+    const hits = closestCorners({ ...args, droppableContainers: inStage });
+    return hits.length ? hits : [{ id: column.id }];
+  };
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: boardKeyboardCoordinates }));
   const onDragEnd = (e: DragEndEvent) => {
     setDragging(null);
     const deal = deals.find((d) => d.id === e.active.id);
@@ -96,6 +133,21 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
     let index = column.findIndex((d) => d.id === target.id);
     if (deal.stage === target.stage && deal.position < target.position) index += 1;
     commit(deal, target.stage, index);
+  };
+
+  // What a screen reader hears while a card is moved: deal and stage names, not ids.
+  const nameOf = (id: string | number) => deals.find((d) => d.id === id)?.name ?? "the deal";
+  const placeOf = (id: string | number | undefined) => {
+    if (id === undefined) return null;
+    const key = String(id);
+    const stage = key.startsWith("col:") ? (key.slice(4) as Stage) : deals.find((d) => d.id === key)?.stage;
+    return stage ? STAGE_LABEL[stage] : null;
+  };
+  const announcements: Announcements = {
+    onDragStart: ({ active }) => `Picked up ${nameOf(active.id)}. Arrow left and right change the stage, up and down the order. Space drops it, Escape cancels.`,
+    onDragOver: ({ active, over }) => (placeOf(over?.id) ? `${nameOf(active.id)} is over ${placeOf(over?.id)}.` : `${nameOf(active.id)} is not over a stage.`),
+    onDragEnd: ({ active, over }) => (placeOf(over?.id) ? `Dropped ${nameOf(active.id)} in ${placeOf(over?.id)}.` : `${nameOf(active.id)} was put back.`),
+    onDragCancel: ({ active }) => `Cancelled. ${nameOf(active.id)} was put back.`,
   };
 
   useHotkeys({ n: (e) => { e.preventDefault(); setAdding(true); } });
@@ -154,7 +206,7 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
       ) : null}
 
       {/* Board, 768 px and up */}
-      <DndContext id="pipeline" sensors={sensors} collisionDetection={closestCorners} onDragStart={(e) => setDragging(String(e.active.id))} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
+      <DndContext id="pipeline" sensors={sensors} accessibility={{ announcements, screenReaderInstructions: { draggable: "Press Space to pick up this deal. Arrow left and right change the stage, up and down the order. Space drops it, Escape cancels." } }} collisionDetection={collision} onDragStart={(e) => setDragging(String(e.active.id))} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
         <div className={cn("scroll-thin mt-3 flex-1 gap-3 relative overflow-x-auto px-4 pb-4 sm:px-6", view === "board" ? "hidden md:flex" : "hidden")}>
           {STAGES.map((s) => {
             const closed = s === "won" || s === "lost";
