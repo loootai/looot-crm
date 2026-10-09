@@ -8,10 +8,10 @@ import { PeopleTable } from "@/components/people/PeopleTable";
 import { Composer, Timeline } from "@/components/timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { dueLabel, fullName, money, num, shortDate } from "@/lib/format";
+import { dueLabel, money, num, shortDate } from "@/lib/format";
 import { readLimits } from "@/lib/limits";
 import { fetchPrices } from "@/lib/prices";
-import { companyDetail } from "@/lib/queries";
+import { companyDetail, personRows } from "@/lib/queries";
 import { requireSession } from "@/lib/store";
 import { OPEN_STAGES, STAGE_LABEL } from "@/lib/types";
 
@@ -37,9 +37,9 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
       </Page>
     );
   }
-  const { company, contacts, deals } = detail;
+  const { company, deals } = detail;
   const open = deals.filter((d) => OPEN_STAGES.includes(d.stage));
-  const people = contacts.map((c) => ({ ...c, name: fullName(c), companyName: company.name, companyDomain: company.domain, lastActivity: detail.lastActivityOf[c.id] ?? null }));
+  const people = await personRows(store, company.id);
   const signalCount = detail.sections.reduce((s, x) => s + x.signals.length, 0);
 
   const rail = (
@@ -94,7 +94,7 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
         <aside className="max-lg:hidden">{rail}</aside>
         <div className="min-w-0">
           <CompanyTabs
-            counts={{ people: contacts.length, deals: deals.length, signals: signalCount }}
+            counts={{ people: people.length, deals: deals.length, signals: signalCount }}
             tabs={{
               details: rail,
               timeline: (

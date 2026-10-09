@@ -86,6 +86,7 @@ export function PeopleTable({ rows, prices, roleKeywords, companies, bulkMax, sc
       kind: "find_people",
       targetIds: [seed.id],
       options: { keywords, limit },
+      closeOnDone: true,
       onDone: (res) => setFound({ seed, candidates: res.candidates ?? [], note: res.runs[0]?.note ?? res.runs[0]?.error ?? null }),
     });
   };
@@ -271,7 +272,7 @@ function ContactDrawer({ person, prices, onClose, onFind }: { person: PersonRow 
       {action}
     </div>
   );
-  const via = (at: string | null) => (at ? `${person.source === "looot" || person.email_checked_at ? "found" : "added"} ${relative(at, now)} via looot` : null);
+  const via = (at: string | null) => (at ? `found ${relative(at, now)} via looot` : null);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <SheetContent aria-describedby={undefined}>
@@ -289,7 +290,7 @@ function ContactDrawer({ person, prices, onClose, onFind }: { person: PersonRow 
           <section aria-labelledby="cd-h">
             <h3 id="cd-h" className="text-13 font-semibold">Contact data</h3>
             <dl className="mt-1 border-t border-border">
-              {row("Work email", person.email ?? <span className="text-muted-foreground">{person.email_status === "not_found" ? "Looked for, not found" : "Not found yet"}</span>, person.email ? (person.source === "looot" ? via(person.email_checked_at) : `from ${person.source === "csv" ? "your CSV" : "manual entry"}`) : person.email_status === "not_found" && person.email_checked_at ? `checked ${relative(person.email_checked_at, now)}, $0` : null,
+              {row("Work email", person.email ?? <span className="text-muted-foreground">{person.email_status === "not_found" ? "Looked for, not found" : "Not found yet"}</span>, person.email ? (person.emailFoundAt ? `found ${relative(person.emailFoundAt, now)} via looot` : `from ${person.source === "csv" ? "your CSV" : "manual entry"}`) : person.email_status === "not_found" && person.email_checked_at ? `checked ${relative(person.email_checked_at, now)}, $0` : null,
                 person.email ? <CopyButton value={person.email} label="email" /> : <Button size="sm" onClick={() => quote({ kind: "contact_enrich", targetIds: [person.id], steps: ["email", "verify"] })}>Find <span className="font-mono">({usd4(prices["people.email.find"]).replace(/0$/, "")})</span></Button>)}
               {row("Email status", <EmailStatusLabel status={person.email_status} className="text-13" />, person.email_checked_at && person.email_status !== "unchecked" && person.email_status !== "not_found" ? `checked ${relative(person.email_checked_at, now)} via looot` : null,
                 person.email && person.email_status === "unchecked" ? <Button size="sm" onClick={() => quote({ kind: "email_verify", targetIds: [person.id] })}>Verify <span className="font-mono">({usd4(prices["people.email.verify"])})</span></Button> : null)}

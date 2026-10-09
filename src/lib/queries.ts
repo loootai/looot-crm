@@ -257,10 +257,14 @@ export interface PersonRow extends Contact {
   companyName: string | null;
   companyDomain: string | null;
   lastActivity: string | null;
+  /** When a looot run found this contact's work email. Null when the email was typed or imported. */
+  emailFoundAt: string | null;
 }
 
 export async function personRows(store: Store, companyId?: string): Promise<PersonRow[]> {
-  const [contacts, companies, activities] = await Promise.all([store.all("contacts", companyId ? { company_id: companyId } : undefined), store.all("companies"), store.all("activities")]);
+  const [contacts, companies, activities, finds] = await Promise.all([store.all("contacts", companyId ? { company_id: companyId } : undefined), store.all("companies"), store.all("activities"), store.all("runs", { job_id: "people.email.find", outcome: "data" })]);
+  const found = new Map<string, string>();
+  for (const r of finds) if (r.target_id && (!found.has(r.target_id) || r.created_at > found.get(r.target_id)!)) found.set(r.target_id, r.created_at);
   const co = new Map(companies.map((c) => [c.id, c]));
   const last = new Map<string, string>();
   for (const a of activities) if (a.contact_id && (!last.has(a.contact_id) || a.created_at > last.get(a.contact_id)!)) last.set(a.contact_id, a.created_at);
@@ -270,6 +274,8 @@ export async function personRows(store: Store, companyId?: string): Promise<Pers
     companyName: c.company_id ? (co.get(c.company_id)?.name ?? null) : null,
     companyDomain: c.company_id ? (co.get(c.company_id)?.domain ?? null) : null,
     lastActivity: last.get(c.id) ?? null,
+    // Contacts that looot created carry no find run of their own. Their email came with the search.
+    emailFoundAt: c.email ? (found.get(c.id) ?? (c.source === "looot" ? (c.email_checked_at ?? c.created_at) : null)) : null,
   }));
 }
 

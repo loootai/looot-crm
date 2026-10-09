@@ -3,6 +3,7 @@ import { DemoLooot } from "@/demo/demoLooot";
 import { seedDemo } from "@/demo/seed";
 import { FALLBACK_PRICES } from "./jobs";
 import { LoootError, type LoootRun } from "./looot";
+import { personRows } from "./queries";
 import { clampMax, executeAction, type ActionRequest, type LoootLike } from "./runner";
 import { MemoryStore } from "./store/demoStore";
 
@@ -236,6 +237,20 @@ describe("demo looot", () => {
     expect(enrich.action.estimate_usd).toBe(0.04685);
     expect(enrich.action.actual_usd).toBeLessThanOrEqual(0.1);
     expect(new Set(looot.keys).size).toBe(looot.keys.length);
+  });
+});
+
+describe("where an email came from", () => {
+  it("marks an email looot found on an imported contact as found by looot, not as part of the CSV", async () => {
+    const store = fresh();
+    const before = (await personRows(store)).find((p) => p.id === "p-noor-al-sayed")!;
+    expect(before.source).not.toBe("looot");
+    expect(before.emailFoundAt).toBeNull();
+    await executeAction(deps(store, new FakeLooot((job) => ({ result: BODY[job], actualCost: 0.001 }))), req({ targetIds: ["p-noor-al-sayed"] }));
+    const after = (await personRows(store)).find((p) => p.id === "p-noor-al-sayed")!;
+    expect(after.email).toBe("found@brightwell-logistics.example");
+    expect(after.source).not.toBe("looot");
+    expect(after.emailFoundAt).not.toBeNull();
   });
 });
 
