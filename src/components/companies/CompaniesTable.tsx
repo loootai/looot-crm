@@ -44,6 +44,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
   const [deleting, setDeleting] = React.useState(false);
   const [search, setSearch] = React.useState(query.q);
   const now = React.useMemo(() => new Date(), []);
+  const clearing = React.useRef(false);
 
   React.useEffect(() => {
     try {
@@ -70,6 +71,11 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
     [sp, path],
   );
   React.useEffect(() => {
+    // "Clear filters" empties the box and the URL in one go. Wait for the URL before syncing again.
+    if (clearing.current) {
+      if (search === query.q) clearing.current = false;
+      return;
+    }
     if (search === query.q) return;
     const t = setTimeout(() => router.replace(url({ q: search, page: null }), { scroll: false }), 250);
     return () => clearTimeout(t);
@@ -99,7 +105,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
           <span className="truncate">{row.original.topSignal.title}</span>
         </span>
       ) : <span className="text-muted-foreground">{row.original.intentCheckedAt ? "None in 90 days" : "Not checked yet"}</span> },
-      { id: "industry", header: "Industry", cell: ({ row }) => <span className="truncate">{row.original.industry ?? ""}</span> },
+      { id: "industry", header: "Industry", cell: ({ row }) => <span className="block truncate" title={row.original.industry ?? undefined}>{row.original.industry ?? ""}</span> },
       { id: "employees", header: "Employees", meta: { right: true }, cell: ({ row }) => <span className="tnum">{row.original.employees ? num(row.original.employees) : ""}</span> },
       { id: "openValueCents", header: "Open deals", meta: { right: true }, cell: ({ row }) => row.original.openValueCents ? (
         <span className="tnum whitespace-nowrap">{money(row.original.openValueCents)} <span className="text-xs text-muted-foreground">{row.original.bestStage ? STAGE_LABEL[row.original.bestStage] : ""}</span></span>
@@ -218,7 +224,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
       )}
 
       {rows.length === 0 ? (
-        <EmptyState title="No company matches these filters" actions={<Button asChild><Link href={path}>Clear filters</Link></Button>} />
+        <EmptyState title="No company matches these filters" actions={<Button onClick={() => { clearing.current = true; setSearch(""); router.replace(path, { scroll: false }); }}>Clear filters</Button>} />
       ) : (
         <>
           <div className="scroll-thin mt-3 relative overflow-x-auto rounded-md border border-border bg-surface max-sm:hidden">
@@ -234,7 +240,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
                       const active = query.sort === h.column.id;
                       const right = (h.column.columnDef.meta as { right?: boolean } | undefined)?.right;
                       return (
-                        <Th key={h.id} aria-sort={active ? (query.dir === "asc" ? "ascending" : "descending") : undefined} className={cn(h.column.id === "name" && "sticky left-9 z-20 w-60 min-w-52", right && "text-right")}>
+                        <Th key={h.id} aria-sort={active ? (query.dir === "asc" ? "ascending" : "descending") : undefined} className={cn("px-2", h.column.id === "name" && "sticky left-9 z-20 w-60 min-w-52", right && "text-right")}>
                           {sortable ? (
                             <Link href={sortHref(h.column.id)} scroll={false} className={cn("inline-flex items-center gap-1 rounded-sm hover:text-foreground", active && "text-foreground")}>
                               {flexRender(h.column.columnDef.header, h.getContext())}
@@ -259,7 +265,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
                       {row.getVisibleCells().map((cell) => {
                         const right = (cell.column.columnDef.meta as { right?: boolean } | undefined)?.right;
                         return (
-                          <Td key={cell.id} className={cn("max-w-56 px-2.5 transition-colors duration-100", bg, cell.column.id === "name" && "sticky left-9 z-[5] w-60 min-w-52 max-w-60 border-r", right && "text-right")}>
+                          <Td key={cell.id} className={cn("px-2 transition-colors duration-100", cell.column.id === "topSignal" ? "max-w-44 2xl:max-w-64" : cell.column.id === "industry" ? "max-w-36 2xl:max-w-56" : "max-w-56", bg, cell.column.id === "name" && "sticky left-9 z-[5] w-60 min-w-52 max-w-60 border-r", right && "text-right")}>
                             {flexRender(cell.column.columnDef.cell, cell.getContext())}
                           </Td>
                         );
