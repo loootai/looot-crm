@@ -92,8 +92,18 @@ export function SpendChart({ days, groups }: { days: { date: string; byGroup: Re
   React.useEffect(() => {
     if (scroller.current) scroller.current.scrollLeft = scroller.current.scrollWidth;
   }, []);
-  const W = 720;
-  const H = 150;
+  // Draw at the real width, so bars stay 8 px and labels stay their size on a wide screen.
+  const [W, setW] = React.useState(720);
+  React.useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const fit = () => setW(Math.max(640, Math.floor(el.clientWidth)));
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const H = 200;
   const left = 52;
   const bottom = 20;
   const top = 8;
@@ -107,9 +117,9 @@ export function SpendChart({ days, groups }: { days: { date: string; byGroup: Re
   return (
     <div className="relative">
       <div ref={scroller} className="scroll-thin overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Spend per day for the last 30 days. Highest day ${usd4(rawMax)}.`} className="block min-w-[640px]">
+      <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img" aria-label={`Spend per day for the last 30 days. Highest day ${usd4(rawMax)}.`} className="block min-w-[640px]">
         {ticks.map((t) => (
-          <text key={t} x={left - 8} y={y(t) + 3} textAnchor="end" className="fill-muted-foreground font-mono text-[10px]">
+          <text key={t} x={left - 8} y={y(t) + 3} textAnchor="end" className="fill-muted-foreground font-mono text-[11px]">
             ${t.toFixed(step < 0.01 ? 3 : 2)}
           </text>
         ))}
@@ -129,7 +139,7 @@ export function SpendChart({ days, groups }: { days: { date: string; byGroup: Re
                 return <rect key={g} x={cx - 4} y={y1} width="8" height={h} fill={RAMP[gi]} rx="1" />;
               })}
               {(i % 5 === 0 || i === days.length - 1) && (
-                <text x={i === days.length - 1 ? left + (i + 1) * slot : cx} y={H - 5} textAnchor={i === days.length - 1 ? "end" : "middle"} className="fill-muted-foreground text-[10px]">
+                <text x={i === days.length - 1 ? left + (i + 1) * slot : cx} y={H - 5} textAnchor={i === days.length - 1 ? "end" : "middle"} className="fill-muted-foreground text-[11px]">
                   {shortDate(d.date)}
                 </text>
               )}
