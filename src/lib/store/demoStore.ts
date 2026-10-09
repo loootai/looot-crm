@@ -8,20 +8,25 @@ export function emptyData(): DemoData {
   return Object.fromEntries(TABLE_NAMES.map((t) => [t, []])) as unknown as DemoData;
 }
 
-/** In-memory store. Used by demo mode (seeded) and by the tests (empty or seeded). */
+/**
+ * In-memory store. Used by demo mode (seeded) and by the tests (empty or seeded).
+ * Reads and writes return copies, as a database does. A caller that reads a row, updates it, then
+ * compares the two must see the old values in the first one.
+ */
 export class MemoryStore implements Store {
   readonly demo = true;
   constructor(readonly data: DemoData = emptyData()) {}
 
   async all<T extends TableName>(table: T, where?: Partial<Tables[T]>): Promise<Tables[T][]> {
     const rows = this.data[table] as Tables[T][];
-    if (!where) return [...rows];
+    if (!where) return rows.map((r) => ({ ...r }));
     const keys = Object.keys(where) as (keyof Tables[T])[];
-    return rows.filter((r) => keys.every((k) => r[k] === where[k]));
+    return rows.filter((r) => keys.every((k) => r[k] === where[k])).map((r) => ({ ...r }));
   }
 
   async get<T extends TableName>(table: T, id: string): Promise<Tables[T] | null> {
-    return (this.data[table] as Tables[T][]).find((r) => r.id === id) ?? null;
+    const row = (this.data[table] as Tables[T][]).find((r) => r.id === id);
+    return row ? { ...row } : null;
   }
 
   async insert<T extends TableName>(table: T, rows: Partial<Tables[T]>[]): Promise<Tables[T][]> {
@@ -29,7 +34,7 @@ export class MemoryStore implements Store {
       (r) => ({ id: randomUUID(), created_at: new Date().toISOString(), ...structuredClone(ROW_DEFAULTS[table]), ...r }) as Tables[T],
     );
     (this.data[table] as Tables[T][]).push(...made);
-    return made;
+    return made.map((r) => ({ ...r }));
   }
 
   async insertIgnore<T extends TableName>(table: T, rows: Partial<Tables[T]>[], conflict: (keyof Tables[T])[]): Promise<Tables[T][]> {
@@ -50,7 +55,7 @@ export class MemoryStore implements Store {
       if (next.actual_usd > next.max_cost_usd + 1e-9) throw new Error("actions_actual_within_max");
     }
     Object.assign(row, patch);
-    return row;
+    return { ...row };
   }
 
   async remove(table: TableName, ids: string[]): Promise<number> {

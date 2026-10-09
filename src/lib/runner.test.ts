@@ -238,3 +238,15 @@ describe("demo looot", () => {
     expect(new Set(looot.keys).size).toBe(looot.keys.length);
   });
 });
+
+describe("the in-memory store", () => {
+  it("hands out copies like a database does, so a row read before an update keeps its old values", async () => {
+    const store = fresh();
+    const before = (await store.get("deals", "d-selwyn"))!;
+    const listed = (await store.all("deals", { stage: "lead" })).find((d) => d.id === "d-selwyn")!;
+    await store.update("deals", "d-selwyn", { stage: "qualified" });
+    expect(before.stage).toBe("lead");
+    expect(listed.stage).toBe("lead");
+    expect((await store.get("deals", "d-selwyn"))!.stage).toBe("qualified");
+  });
+});

@@ -113,7 +113,8 @@ export async function moveDeal(dealId: string, stage: Stage, position?: number, 
       const inStage = await store.all("deals", { stage });
       pos = inStage.reduce((m, d) => Math.max(m, d.position), 0) + 1000;
     }
-    const changed = deal.stage !== stage;
+    const from = deal.stage;
+    const changed = from !== stage;
     const closed = stage === "won" || stage === "lost";
     await store.update("deals", dealId, {
       stage,
@@ -122,7 +123,7 @@ export async function moveDeal(dealId: string, stage: Stage, position?: number, 
     });
     if (changed) {
       await store.insert("activities", [
-        { kind: "stage_change", company_id: deal.company_id, deal_id: deal.id, body: closed && reason ? reason.trim().slice(0, 200) : null, meta: { from: deal.stage, to: stage, label: `${STAGE_LABEL[deal.stage]} to ${STAGE_LABEL[stage]}` } },
+        { kind: "stage_change", company_id: deal.company_id, deal_id: deal.id, body: closed && reason ? reason.trim().slice(0, 200) : null, meta: { from, to: stage, label: `${STAGE_LABEL[from]} to ${STAGE_LABEL[stage]}` } },
       ]);
     }
     return { ok: true };
