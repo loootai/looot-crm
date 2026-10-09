@@ -177,7 +177,7 @@ function Section({ section: s, companyId, now, weights, roleKeywords, tech }: { 
       )}
       {s.kind === "tech" && tech.length > 0 && s.state !== "never" && (
         <details className="mt-3 text-13">
-          <summary className="inline-block rounded-sm text-xs font-medium text-primary hover:underline">Full stack, {tech.length} technologies</summary>
+          <summary className="inline-block rounded-sm text-xs font-medium text-primary hover:underline">Full stack, {tech.length} {tech.length === 1 ? "technology" : "technologies"}</summary>
           <p className="mt-2 leading-relaxed text-muted-foreground">{tech.join(", ")}</p>
         </details>
       )}

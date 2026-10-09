@@ -53,6 +53,8 @@ describe("job and news filters", () => {
     expect(tagHeadline("Northgate Parcel launches Sunday delivery")).toBe("launch");
     expect(tagHeadline("Ostrava and Tidewater sign a partnership")).toBe("partnership");
     expect(tagHeadline("Brightwell named to fastest-growing list")).toBe("other");
+    expect(tagHeadline("Lowmoor Timber launches carrier appointment portal for inbound freight")).toBe("launch");
+    expect(tagHeadline("Tamarind Grocers Co-op appoints Lucia Benavides to lead the Reno build")).toBe("leadership");
   });
 });
 

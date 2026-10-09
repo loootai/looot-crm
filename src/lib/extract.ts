@@ -99,7 +99,7 @@ export function changedLines(before: string, after: string, max = 3): string[] {
 
 const TAGS: [string, RegExp][] = [
   ["funding", /\b(raises?|raised|funding|series [a-f]\b|seed round|investment led by)/i],
-  ["leadership", /\b(appoints?|names? .{0,40}\b(ceo|cto|cfo|coo|cmo|cro|chief|president|vp)\b|joins as|steps down|new (ceo|cto|cfo))/i],
+  ["leadership", /\b(appoint(s|ed)?\b|names? .{0,40}\b(ceo|cto|cfo|coo|cmo|cro|chief|president|vp)\b|joins as|steps down|new (ceo|cto|cfo))/i],
   ["launch", /\b(launch(es|ed)?|introduc(es|ed)|unveil(s|ed)|releases?|rolls out)\b/i],
   ["partnership", /\b(partner(s|ship)?|teams up|integration with)\b/i],
 ];
