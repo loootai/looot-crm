@@ -31,7 +31,6 @@ const SHOTS = [
   ["people", "/people", D],
   ["contact", "/people?contact=p-noor-al-sayed", D],
   ["quote", "/people?contact=p-noor-al-sayed", D, [click("Enrich contact"), 1200]],
-  ["quote-done", "/people?contact=p-greta-lindahl", D, [click("Enrich contact"), 1200, click("Run (demo"), 6500]],
   ["find-people", "/people?contact=p-adaeze-okonkwo", D, [click("Find more people"), 500]],
   ["pipeline", "/pipeline", D],
   ["deal", "/pipeline?deal=d-brightwell", D, [900]],
@@ -60,6 +59,8 @@ const SHOTS = [
   ["m-spend", "/spend", M],
   ["m-settings", "/settings", M],
   ["m-pipeline-dark", "/pipeline?theme=dark", M, [500]],
+  // Last, because it makes a demo run that would otherwise show up in the People and Spend shots.
+  ["quote-done", "/people?contact=p-greta-lindahl", D, [click("Enrich contact"), 1200, click("Run (demo"), 6500]],
   // Sign-in redirects to Today in demo mode. Take these two from a build without NEXT_PUBLIC_DEMO:
   //   node scripts/screenshots.mjs http://localhost:3218 docs/screenshots login
   ["login", "/login", D],

@@ -41,9 +41,9 @@ In demo mode you can force a state on a list page with `?state=empty` or `?state
 | **People.** Email status as an icon and a word, phone, last activity, filters and bulk enrich. | ![People table](docs/screenshots/people.png) |
 | **Contact drawer.** Each missing field has a Find button with its price. | ![Contact drawer](docs/screenshots/contact.png) |
 | **Quote.** Every paid action opens this first. Untick a step, lower the most you will spend, then run. | ![Quote dialog](docs/screenshots/quote.png) |
-| **After the run.** What each step returned and what it cost. Here the email was not found, so verification was skipped and not paid for. | ![Quote dialog after a run](docs/screenshots/quote-done.png) |
+| **After the run.** What each step returned and what it cost. Here the email was found and verified, and the phone lookup came back empty at $0. A step that returns nothing gets no check mark. | ![Quote dialog after a run](docs/screenshots/quote-done.png) |
 | **Find more people like this.** Starts from one contact's title. Nothing is saved until you pick. | ![Find more people](docs/screenshots/find-people.png) |
-| **Pipeline.** Six stages with count and value. Cards carry the intent score and the next step, in amber when overdue or missing. Drag with the mouse, or `Space` and the arrow keys. | ![Pipeline board](docs/screenshots/pipeline.png) |
+| **Pipeline.** Six stages with count and value. Cards carry the intent score and the next step, in amber when overdue or missing. Drag with the mouse, or pick a card up with `Space`, change its stage with the left and right arrows and its order with up and down, then `Space` again. Dropping on Won or Lost asks for the reason. | ![Pipeline board](docs/screenshots/pipeline.png) |
 | **Deal.** Stage stepper, the two newest signals as "Why now", next step, contacts with roles, timeline. | ![Deal sheet](docs/screenshots/deal.png) |
 | **Spend.** Every looot run the app made: job, run id, cost and idempotency key, next to the max you confirmed. | ![Spend](docs/screenshots/spend.png) |
 | **Settings.** Role keywords for the hiring match, watched pages, score weights, and your ceiling per action. | ![Settings](docs/screenshots/settings.png) |
@@ -107,7 +107,8 @@ The app calls jobs, not pinned endpoints, so looot picks the provider and the re
 4. Each run carries an idempotency key, `crm:<actionKey>:<job>:<target>`. A retry or a double click replays the stored run and does not charge again. `runs` has a unique index on it.
 5. Steps that would be pointless are not paid for. Verification does not run when no email was found.
 6. A failed, blocked or empty run is recorded with its real cost, which is normally $0.
-7. `PER_ACTION_MAX_USD` (default 2) and `BULK_MAX_RECORDS` (default 50) are server limits. Your typed max is clamped to the first, and to the lower ceiling you can set in Settings.
+7. A run whose end is unknown keeps its cap held out of your max. That is a run still going when the app stops polling (about a minute), or a request that got no answer. looot may still charge it later, so the steps after it only get what is left. The run row says how much is held.
+8. `PER_ACTION_MAX_USD` (default 2) and `BULK_MAX_RECORDS` (default 50) are server limits. Your typed max is clamped to the first, and to the lower ceiling you can set in Settings.
 
 `LOOOT_TOKEN` is read in `src/lib/looot.ts`, `src/lib/api.ts` and the balance route, all of which import `server-only`. There is no `NEXT_PUBLIC_` copy. The build was checked with a fake token: `grep -r` over `.next/static` does not find the value. The variable name does appear there once, inside the error message "LOOOT_TOKEN is not set on the server".
 
@@ -164,7 +165,7 @@ npm run test:rls
 npm run build
 ```
 
-`npm test` runs 77 vitest tests with looot mocked: the score rule with decay and caps, plan and worst case per action, the max-cost guard, idempotency, each result reader on fixtures, CSV mapping and duplicates, and the demo seed sums. `scripts/screenshots.mjs` retakes the README screenshots from a running demo with headless Chrome.
+`npm test` runs 82 vitest tests with looot mocked: the score rule with decay and caps, plan and worst case per action, the max-cost guard (including the hold on a run that has not ended), idempotency, each result reader on fixtures, CSV mapping and duplicates, and the demo seed sums. `scripts/screenshots.mjs` retakes the README screenshots from a running demo with headless Chrome. Start the demo fresh first, since demo writes last until the server restarts.
 
 Dependencies are pinned to exact versions and `.npmrc` sets `ignore-scripts=true`. `scripts/leak-scan.sh` runs before each commit once you run `git config core.hooksPath .githooks`.
 
@@ -179,6 +180,9 @@ Dependencies are pinned to exact versions and `.npmrc` sets `ignore-scripts=true
 - No scheduled refresh. Intent is checked when you click.
 - No email sending, no sequences, no dialer, no sync to another CRM. CSV import and export instead.
 - No contrast audit tool was run. Colors were picked to pass AA and checked by eye in both themes.
+- Some icon buttons are 24 to 28 px at phone width (row actions on Today, the row expander in Spend, keyword chips in Settings). The target is 40 px.
+- The spend chart shows a day's split on hover only. There is no keyboard path to it yet. The table under it has the same numbers.
+- `npm audit` reports `braces` (a lint-time dependency, no fixed version published). Nothing from it ships in the app.
 - Later signal kinds from the catalog: lookalike accounts (`company.similar`), a contact changed jobs (`people.job-change`), a company job board (`jobs.company`).
 
 ## License
