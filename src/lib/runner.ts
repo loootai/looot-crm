@@ -1,4 +1,4 @@
-import { costOf, LoootError, type LoootRun } from "./looot";
+import { costOf, LoootError, TERMINAL_STATUSES, type LoootRun } from "./looot";
 import { round6, type PriceMap } from "./jobs";
 import { buildPlan, idempotencyKey, type Plan, type PlanLine, type StepId } from "./plan";
 import { applyResult, type Candidate } from "./apply";
@@ -74,8 +74,10 @@ export function clampMax(requested: number, perActionMaxUsd: number, settingsCei
  * Runs a paid action. The plan is rebuilt here from record ids, never taken from the client.
  * Each run's cap is min(job cap, confirmed max minus what was already spent). When that is below
  * the run's estimate, the run and everything after it is skipped and the action ends as
- * stopped_at_max, so the total can never pass the confirmed max. Posting the same actionKey again
- * returns the stored action and calls looot zero times.
+ * stopped_at_max, so the total can never pass the confirmed max. A run whose end is unknown (still
+ * running at the poll deadline, or the request got no answer) keeps its cap held out of what is
+ * left, because looot may still charge it. Posting the same actionKey again returns the stored
+ * action and calls looot zero times.
  */
 export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promise<ActionResult> {
   const { store, looot } = deps;
@@ -101,6 +103,8 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
   let action = inserted[0];
 
   let spent = 0;
+  /** Caps of runs whose end is unknown. Counted against the max, never shown as spent. */
+  let held = 0;
   let stopped = false;
   let fatal: string | null = null;
   const outcomes: Run["outcome"][] = [];
@@ -132,7 +136,7 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
       }
       input = { email };
     }
-    const left = round6(max - spent);
+    const left = round6(Math.max(0, max - spent - held));
     const cap = round6(Math.min(line.cap, left));
     if (cap < line.quote) {
       stopped = true;
@@ -153,7 +157,11 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
         patch = { looot_run_id: run.runId, status: run.status, outcome: applied.outcome, cost_usd: cost, note: applied.note ?? null };
       } else {
         const blocked = run.status === "blocked";
-        const msg = run.error?.message ?? (blocked ? "Balance too low. Top up at looot.ai" : TERMINAL_HINT[run.status] ?? `The run did not finish in time (status ${run.status}).`);
+        const open = !TERMINAL_STATUSES.has(run.status);
+        if (open) held = round6(held + cap);
+        const msg = open
+          ? `The run did not finish in time (status ${run.status}). It may still complete, so ${usd4(cap)} of the max is held.`
+          : (run.error?.message ?? (blocked ? "Balance too low. Top up at looot.ai" : (TERMINAL_HINT[run.status] ?? "The run failed.")));
         if (blocked) fatal = msg;
         patch = { looot_run_id: run.runId, status: run.status, outcome: "failed", cost_usd: cost, error: msg };
       }
@@ -161,7 +169,10 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
       const err = e instanceof LoootError ? e : null;
       const msg = err?.code === "missing_token" ? "LOOOT_TOKEN is not set on the server. Add it to .env.local" : err?.status === 402 ? "Balance too low. Top up at looot.ai" : e instanceof Error ? e.message : "The request to looot failed";
       if (err && (err.code === "missing_token" || err.status === 401 || err.status === 402 || err.status === 403)) fatal = msg;
-      patch = { status: "failed", outcome: "failed", cost_usd: 0, error: msg };
+      // looot answered with a refusal (4xx, or no token to send): nothing ran. Anything else may have reached looot.
+      const refused = !!err && (err.code === "missing_token" || (err.status >= 400 && err.status < 500));
+      if (!refused) held = round6(held + cap);
+      patch = { status: "failed", outcome: "failed", cost_usd: 0, error: refused ? msg : `${msg}. No answer came back, so ${usd4(cap)} of the max is held.` };
     }
     await store.update("runs", row.id, patch);
     outcomes.push(patch.outcome ?? null);

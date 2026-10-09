@@ -56,6 +56,28 @@ describe("max-cost guard", () => {
     expect(out.action.status).toBe("done");
     expect(out.action.actual_usd).toBeCloseTo(0.022, 6);
   });
+  it("holds the cap of a run that has not ended, so a late charge cannot push the action past its max", async () => {
+    const store = fresh();
+    // The email run is still running when the poll deadline passes. looot may yet charge up to its $0.03 cap.
+    const looot = new FakeLooot((job) => (job === "people.email.find" ? { status: "running", actualCost: null } : { result: BODY[job], actualCost: 0.0264 }));
+    const out = await executeAction(deps(store, looot), req({ targetIds: ["p-noor-al-sayed"], maxCostUsd: 0.05 }));
+    // 0.05 - 0.03 held = 0.02 left, below the phone quote of $0.0264, so the phone step must not run.
+    expect(looot.calls.map((c) => c.jobId)).toEqual(["people.email.find"]);
+    expect(out.action.status).toBe("stopped_at_max");
+    expect(out.runs[0]).toMatchObject({ outcome: "failed", status: "running", cost_usd: 0 });
+    expect(out.runs[0].error).toContain("$0.0300 of the max is held");
+    expect(out.runs[2].note).toBe("Left of the max: $0.0200. This step needs $0.0264.");
+  });
+  it("holds the cap when the request to looot fails without an answer, and not when looot refuses it", async () => {
+    const lost = new FakeLooot((job) => (job === "people.email.find" ? new TypeError("fetch failed") : { result: BODY[job], actualCost: 0.0264 }));
+    const a = await executeAction(deps(fresh(), lost), req({ targetIds: ["p-noor-al-sayed"], maxCostUsd: 0.05 }));
+    expect(lost.calls.map((c) => c.jobId)).toEqual(["people.email.find"]);
+    expect(a.action.status).toBe("stopped_at_max");
+    const refused = new FakeLooot((job) => (job === "people.email.find" ? new LoootError("input is not valid", 422, "invalid_input") : { result: BODY[job], actualCost: 0.0264 }));
+    const b = await executeAction(deps(fresh(), refused), req({ actionKey: "7a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d", targetIds: ["p-noor-al-sayed"], maxCostUsd: 0.05 }));
+    expect(refused.calls.map((c) => [c.jobId, c.cap])).toEqual([["people.email.find", 0.03], ["people.phone.find", 0.05]]);
+    expect(b.action.actual_usd).toBeCloseTo(0.0264, 6);
+  });
   it("clamps the typed max to the env limit and to the ceiling in Settings", async () => {
     expect(clampMax(50, 2, null)).toBe(2);
     expect(clampMax(50, 2, 0.5)).toBe(0.5);
