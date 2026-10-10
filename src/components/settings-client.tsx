@@ -96,7 +96,7 @@ export function SettingsForm({ initial, perActionMax, bulkMax }: { initial: { ro
         </Field>
       </section>
 
-      <div className="sticky bottom-14 z-10 -mx-4 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm sm:bottom-0 sm:-mx-6 sm:px-6">
+      <div className="sticky bottom-0 z-10 -mx-4 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <Button variant="primary" onClick={save} disabled={pending || (!!ceilingError && ceilingNum !== null && ceilingNum <= 0)}>{pending ? "Saving" : "Save settings"}</Button>
       </div>
     </>

@@ -1,36 +1,43 @@
 "use client";
 
 import * as React from "react";
-import Image from "next/image";
-import Link from "next/link";
+import { AppShell, type ShellNavSection } from "@/components/AppShell";
 import { usePathname, useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
 import { toast } from "sonner";
-import { Building2, CalendarCheck, Contact, Ellipsis, Handshake, KanbanSquare, Keyboard, LogOut, Moon, Plus, Receipt, RefreshCw, Search, Settings, Sun, Upload, Users } from "lucide-react";
+import { Building2, Contact, Handshake, Keyboard, LogOut, Plus, Receipt, RefreshCw, Search, Settings, Upload } from "lucide-react";
 import { signOut } from "@/app/actions";
 import { Kbd } from "@/components/common";
-import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tip } from "@/components/ui/popover";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/popover";
 import { initials, usd2 } from "@/lib/format";
 import type { SearchIndex } from "@/lib/queries";
-import { cn } from "@/lib/utils";
 import { shouldIgnoreKey } from "./hotkeys";
 
-const NAV = [
-  { href: "/", label: "Today", icon: CalendarCheck, key: "t" },
-  { href: "/companies", label: "Companies", icon: Building2, key: "c" },
-  { href: "/people", label: "People", icon: Users, key: "p" },
-  { href: "/pipeline", label: "Pipeline", icon: KanbanSquare, key: "d" },
-] as const;
-const NAV2 = [
-  { href: "/spend", label: "Spend", icon: Receipt, key: "s" },
-  { href: "/settings", label: "Settings", icon: Settings, key: "" },
-] as const;
-
-const isActive = (path: string, href: string) => (href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`) || (href === "/pipeline" && path.startsWith("/deals")));
-const titleOf = (path: string) => [...NAV, ...NAV2].find((n) => isActive(path, n.href))?.label ?? "looot CRM";
+const NAV: ShellNavSection[] = [
+  {
+    items: [
+      { href: "/", label: "Today", icon: "dashboard" },
+      { href: "/companies", label: "Companies", icon: "building" },
+      { href: "/people", label: "People", icon: "users" },
+      { href: "/pipeline", label: "Pipeline", icon: "layers", also: ["/deals"] },
+    ],
+  },
+  {
+    items: [
+      { href: "/spend", label: "Spend", icon: "receipt" },
+      { href: "/settings", label: "Settings", icon: "settings" },
+    ],
+  },
+];
+/** Go-to keys: "g" then the letter. */
+const GO = [
+  { href: "/", key: "t" },
+  { href: "/companies", key: "c" },
+  { href: "/people", key: "p" },
+  { href: "/pipeline", key: "d" },
+  { href: "/spend", key: "s" },
+];
 
 const SHORTCUTS: [string, string[]][] = [
   ["Search and commands", ["⌘", "K"]],
@@ -56,7 +63,18 @@ export function Shell({ children, user, demo, index }: { children: React.ReactNo
   const router = useRouter();
   const [palette, setPalette] = React.useState(false);
   const [help, setHelp] = React.useState(false);
-  const [more, setMore] = React.useState(false);
+  const [balance, setBalance] = React.useState<{ balance: number | null; demo: boolean } | null>(null);
+
+  React.useEffect(() => {
+    let alive = true;
+    fetch("/api/balance")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => alive && b && setBalance(b))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   React.useEffect(() => {
     let pending: ReturnType<typeof setTimeout> | null = null;
@@ -74,7 +92,7 @@ export function Shell({ children, user, demo, index }: { children: React.ReactNo
       }
       if (shouldIgnoreKey(e)) return;
       if (w.__crmGoPending) {
-        const hit = [...NAV, ...NAV2].find((n) => n.key && n.key === e.key);
+        const hit = GO.find((n) => n.key === e.key);
         clear();
         if (hit) {
           e.preventDefault();
@@ -103,59 +121,31 @@ export function Shell({ children, user, demo, index }: { children: React.ReactNo
   }, [router]);
 
   return (
-    <div className="flex min-h-dvh">
-      <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[70] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-13 focus:text-primary-foreground">
-        Skip to content
-      </a>
-      <aside className="sticky top-0 hidden h-dvh w-14 shrink-0 flex-col bg-sidebar text-sidebar-foreground sm:flex lg:w-[220px]">
-        <Link href="/" className="flex h-12 items-center gap-2 px-[14px] lg:px-4" aria-label="looot CRM, go to Today">
-          <Image src="/brand/looot-mark.svg" alt="" width={28} height={28} unoptimized />
-          <span className="hidden text-[15px] font-semibold tracking-[-0.01em] lg:inline">CRM</span>
-        </Link>
-        <nav aria-label="Main" className="flex flex-1 flex-col gap-0.5 px-2 pt-2">
-          {NAV.map((n) => (
-            <NavLink key={n.href} item={n} active={isActive(path, n.href)} />
-          ))}
-          <div className="mx-2 my-2 h-px bg-white/10" />
-          {NAV2.map((n) => (
-            <NavLink key={n.href} item={n} active={isActive(path, n.href)} />
-          ))}
-        </nav>
-        <button onClick={() => setHelp(true)} className="m-2 flex h-8 items-center gap-2.5 rounded-md px-2.5 text-13 text-sidebar-muted transition-colors duration-100 hover:bg-white/5 hover:text-sidebar-foreground max-lg:justify-center max-lg:px-0" aria-label="Keyboard shortcuts">
-          <Keyboard className="size-4 shrink-0" strokeWidth={1.5} />
-          <span className="hidden lg:inline">Shortcuts</span>
-          <span className="ml-auto hidden font-mono text-xs lg:inline">?</span>
-        </button>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background/95 px-4 backdrop-blur-sm sm:gap-3 sm:px-6">
-          <Image src="/brand/looot-mark.svg" alt="" width={24} height={24} unoptimized className="sm:hidden" />
-          <p className="truncate text-sm font-semibold sm:text-base">{titleOf(path)}</p>
+    <>
+      <AppShell
+        appName="looot-crm"
+        githubHref="https://github.com/loootai/looot-crm"
+        nav={NAV}
+        demoLabel={demo ? "Seeded data. No Supabase project, no looot token, no charge." : undefined}
+        spend={balance && balance.balance !== null ? { label: balance.demo ? "looot balance (demo)" : "looot balance", spent: usd2(balance.balance) } : undefined}
+        primaryAction={{ href: "/companies?new=1", label: "New company" }}
+      >
+        <div className="flex h-12 items-center gap-2 border-b border-border bg-background/95 px-4 sm:px-6">
           <button
             onClick={() => setPalette(true)}
-            className="ml-auto flex h-8 w-8 items-center justify-center gap-2 rounded-md border border-border-strong bg-surface text-13 text-muted-foreground transition-colors duration-100 hover:bg-muted max-sm:size-10 md:w-64 md:justify-start md:px-2.5"
+            className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5 text-13 text-muted-foreground transition-colors duration-100 hover:bg-muted sm:h-8 sm:max-w-sm sm:flex-none sm:basis-72"
             aria-label="Search companies, people and deals"
           >
             <Search className="size-4 shrink-0" />
-            <span className="hidden flex-1 text-left md:inline">Search or run a command</span>
+            <span className="flex-1 truncate text-left">Search or run a command</span>
             <span className="hidden gap-0.5 md:flex">
               <Kbd>⌘</Kbd>
               <Kbd>K</Kbd>
             </span>
           </button>
-          {demo && (
-            <Tip label="Seeded data. No Supabase project, no looot token, no charge.">
-              <span className="inline-flex h-6 shrink-0 items-center rounded-sm border border-warning/40 bg-warning-bg px-2 text-xs font-medium text-warning" tabIndex={0}>
-                Demo data
-              </span>
-            </Tip>
-          )}
-          <Balance />
-          <ThemeToggle />
           <DropdownMenu>
-            <DropdownMenuTrigger className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-muted text-xs font-medium text-foreground max-sm:hidden" aria-label="Account menu">
-              {initials(user.name)}
+            <DropdownMenuTrigger className="ml-auto grid size-10 shrink-0 place-items-center sm:size-8" aria-label="Account menu">
+              <span className="grid size-8 place-items-center rounded-full border border-border bg-muted text-xs font-medium text-foreground">{initials(user.name)}</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuLabel>
@@ -176,48 +166,9 @@ export function Shell({ children, user, demo, index }: { children: React.ReactNo
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-        </header>
-        <main id="main" className="min-w-0 flex-1">
-          {children}
-        </main>
-      </div>
-
-      <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 grid h-14 grid-cols-5 border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] sm:hidden">
-        {NAV.map((n) => {
-          const active = isActive(path, n.href);
-          return (
-            <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined} className={cn("flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium", active ? "text-primary" : "text-muted-foreground")}>
-              <n.icon className="size-5" strokeWidth={active ? 2 : 1.5} />
-              {n.label}
-            </Link>
-          );
-        })}
-        <button onClick={() => setMore(true)} className={cn("flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium", NAV2.some((n) => isActive(path, n.href)) ? "text-primary" : "text-muted-foreground")} aria-haspopup="dialog">
-          <Ellipsis className="size-5" strokeWidth={1.5} />
-          More
-        </button>
-      </nav>
-
-      <Dialog open={more} onOpenChange={setMore}>
-        <DialogContent className="top-auto bottom-0 max-w-none translate-y-0 animate-up rounded-b-none sm:hidden" hideClose>
-          <DialogHeader className="pr-5">
-            <DialogTitle>{user.name}</DialogTitle>
-            <DialogDescription>{user.email}</DialogDescription>
-          </DialogHeader>
-          <div className="grid p-2 pb-4">
-            {NAV2.map((n) => (
-              <Link key={n.href} href={n.href} onClick={() => setMore(false)} className="flex h-11 items-center gap-3 rounded-md px-3 text-sm hover:bg-muted">
-                <n.icon className="size-4 text-muted-foreground" /> {n.label}
-              </Link>
-            ))}
-            {!demo && (
-              <button onClick={() => signOut()} className="flex h-11 items-center gap-3 rounded-md px-3 text-sm hover:bg-muted">
-                <LogOut className="size-4 text-muted-foreground" /> Sign out
-              </button>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+        {children}
+      </AppShell>
 
       <Palette open={palette} onOpenChange={setPalette} index={index} />
 
@@ -243,59 +194,7 @@ export function Shell({ children, user, demo, index }: { children: React.ReactNo
           </DialogBody>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-function NavLink({ item, active }: { item: { href: string; label: string; icon: React.ComponentType<{ className?: string; strokeWidth?: number }>; key: string }; active: boolean }) {
-  return (
-    <Link
-      href={item.href}
-      aria-current={active ? "page" : undefined}
-      title={item.label}
-      className={cn(
-        "group flex h-8 items-center gap-2.5 rounded-md px-2.5 text-13 font-medium transition-colors duration-100 focus-visible:outline-[#7fe0b8] max-lg:justify-center max-lg:px-0",
-        active ? "bg-sidebar-active text-sidebar-foreground" : "text-sidebar-muted hover:bg-white/5 hover:text-sidebar-foreground",
-      )}
-    >
-      <item.icon className="size-4 shrink-0" strokeWidth={1.5} />
-      <span className="hidden lg:inline">{item.label}</span>
-      {item.key && <span className="ml-auto hidden font-mono text-[11px] opacity-0 transition-opacity duration-100 group-hover:opacity-70 lg:inline">g {item.key}</span>}
-    </Link>
-  );
-}
-
-function Balance() {
-  const [state, setState] = React.useState<{ balance: number | null; demo: boolean } | null>(null);
-  React.useEffect(() => {
-    let alive = true;
-    fetch("/api/balance")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((b) => alive && b && setState(b))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
-  if (!state || state.balance === null) return null;
-  return (
-    <span className="tnum hidden shrink-0 whitespace-nowrap text-13 text-muted-foreground lg:inline">
-      Balance <span className="font-mono text-foreground">{usd2(state.balance)}</span>
-      {state.demo ? " (demo)" : ""}
-    </span>
-  );
-}
-
-function ThemeToggle() {
-  const { resolvedTheme, setTheme } = useTheme();
-  const mounted = React.useSyncExternalStore(() => () => {}, () => true, () => false);
-  const dark = mounted && resolvedTheme === "dark";
-  return (
-    <Tip label={dark ? "Switch to light" : "Switch to dark"}>
-      <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground" onClick={() => setTheme(dark ? "light" : "dark")} aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}>
-        {dark ? <Sun /> : <Moon />}
-      </Button>
-    </Tip>
+    </>
   );
 }
 

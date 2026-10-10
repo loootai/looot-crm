@@ -19,7 +19,7 @@ export default async function PipelinePage({ searchParams }: { searchParams: Pro
   }
   const [deals, companies] = await Promise.all([store.demo && sp.state === "empty" ? [] : dealCards(store), store.all("companies")]);
   return (
-    <div className="flex min-h-[calc(100dvh-48px)] flex-col pb-20 pt-4 sm:pb-2">
+    <div className="flex min-h-[calc(100dvh-104px)] flex-col pb-2 pt-4 lg:min-h-[calc(100dvh-100px)]">
       <h1 className="sr-only">Pipeline</h1>
       <Board deals={deals} companies={companies.map((c) => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name))} />
     </div>

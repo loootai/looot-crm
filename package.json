@@ -1,6 +1,6 @@
 {
   "name": "looot-crm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A small CRM with buying-intent signals built in. Companies, contacts, a pipeline board and an Intent tab per account. Next.js, Supabase and looot.",
   "license": "MIT",
   "private": true,

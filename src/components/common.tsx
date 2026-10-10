@@ -107,7 +107,7 @@ export function Kbd({ children }: { children: React.ReactNode }) {
 
 /** Page frame: gutters and max width shared by every screen. */
 export function Page({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("mx-auto w-full max-w-[1400px] px-4 pb-24 pt-5 sm:px-6 sm:pb-10", className)}>{children}</div>;
+  return <div className={cn("mx-auto w-full max-w-[1400px] px-4 pb-10 pt-5 sm:px-6", className)}>{children}</div>;
 }
 
 export function SectionTitle({ children, aside, className }: { children: React.ReactNode; aside?: React.ReactNode; className?: string }) {
