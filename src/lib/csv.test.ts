@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildImport, guessMapping, parseCsv, toCsv } from "./csv";
 
@@ -34,5 +36,17 @@ describe("csv import", () => {
   });
   it("writes CSV with escaping", () => {
     expect(toCsv([{ a: 'say "hi"', b: "x,y", c: null }])).toBe('a,b,c\n"say ""hi""","x,y",');
+  });
+});
+
+describe("examples/companies.example.csv", () => {
+  it("maps every column and imports 3 companies with 3 contacts", () => {
+    const rows = parseCsv(readFileSync(resolve(__dirname, "../../examples/companies.example.csv"), "utf8"));
+    const mapping = guessMapping(rows[0]);
+    expect(Object.keys(mapping).sort()).toEqual(["domain", "email", "first_name", "last_name", "linkedin_url", "name", "title"]);
+    const plan = buildImport(rows.slice(1), mapping);
+    expect(plan.companies).toHaveLength(3);
+    expect(plan.contacts).toBe(3);
+    expect(plan.invalid).toBe(0);
   });
 });
