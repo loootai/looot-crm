@@ -83,7 +83,7 @@ Then open a company, go to the Intent tab and press Refresh on one signal. The q
 
 The app uses Supabase Auth (magic link and Google) and a Postgres database. There is no local Docker stack in these steps.
 
-1. Create a project at https://supabase.com. In Project Settings, API, copy the project URL into `NEXT_PUBLIC_SUPABASE_URL` and the anon key into `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local`.
+1. Create a project in the Supabase dashboard. In Project Settings, API, copy the project URL into `NEXT_PUBLIC_SUPABASE_URL` and the anon key into `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local`.
 2. Apply the schema. There is one migration, `supabase/migrations/20261009000000_init.sql`. Either link and push from a clone of this repo:
 
    ```bash
