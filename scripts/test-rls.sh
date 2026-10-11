@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Proves row level security on a throwaway Postgres: user 2 sees, changes and forges nothing of
-# user 1 in any of the 11 tables. Needs initdb, pg_ctl and psql on PATH. Touches no Supabase project.
+# user 1 in any of the 12 tables. Needs initdb, pg_ctl and psql on PATH. Touches no Supabase project.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 for bin in initdb pg_ctl psql; do
@@ -18,7 +18,7 @@ for f in "$root"/supabase/migrations/*.sql; do p -f "$f"; done
 out="$(p -At -f "$root/supabase/tests/rls_check.sql" 2>&1 | sed -E "s/^psql:.*NOTICE:  //")"
 echo "$out"
 fail() { echo "RLS check FAILED: $1"; exit 1; }
-tables="companies contacts deals deal_contacts activities actions runs signals signal_baselines score_history settings"
+tables="companies contacts deals deal_contacts activities actions runs signals signal_baselines score_history settings budget_reservations"
 for t in $tables; do
   [[ "$out" == *"user2 sees 0 rows in $t"* ]] || fail "user 2 can read $t"
   [[ "$out" == *"user2 updated 0 rows in $t"* ]] || fail "user 2 can update $t"
@@ -31,5 +31,5 @@ done
 [[ "$out" == *"anon refused"* ]] || fail "anon can read"
 [[ "$out" == *"tables without rls|0"* ]] || fail "a table has no row level security"
 [[ "$out" == *"tables without forced rls|0"* ]] || fail "a table does not force row level security"
-[[ "$out" == *"public tables|11"* ]] || fail "expected 11 tables"
-echo "RLS check passed: 11 tables"
+[[ "$out" == *"public tables|12"* ]] || fail "expected 12 tables"
+echo "RLS check passed: 12 tables"

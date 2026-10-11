@@ -70,7 +70,8 @@ describe("max-cost guard", () => {
     // 0.05 - 0.03 held = 0.02 left, below the phone quote of $0.0264, so the phone step must not run.
     expect(looot.calls.map((c) => c.jobId)).toEqual(["people.email.find"]);
     expect(out.action.status).toBe("stopped_at_max");
-    expect(out.runs[0]).toMatchObject({ outcome: "failed", status: "running", cost_usd: 0 });
+    // A run that has not ended is not recorded as failed: it has no outcome yet and its reservation stays held.
+    expect(out.runs[0]).toMatchObject({ outcome: null, status: "running", cost_usd: 0 });
     expect(out.runs[0].error).toContain("$0.0300 of the max is held");
     expect(out.runs[2].note).toBe("Left of the max: $0.0200. This step needs $0.0264.");
   });

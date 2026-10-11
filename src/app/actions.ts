@@ -179,6 +179,8 @@ const SettingsInput = z.object({
   default_pages: z.array(z.string().trim().regex(/^\/[\w\-./]*$/).max(80)).max(6),
   weights: z.object({ funding: z.number().min(0).max(100), hiring: z.number().min(0).max(100), tech: z.number().min(0).max(100), news_tagged: z.number().min(0).max(100), news_other: z.number().min(0).max(100), site: z.number().min(0).max(100) }),
   action_ceiling_usd: z.number().positive().max(1000).nullable(),
+  daily_budget_usd: z.number().min(0).max(9999),
+  monthly_budget_usd: z.number().min(0).max(9999),
 });
 
 export async function saveSettings(input: z.input<typeof SettingsInput>): Promise<Result> {

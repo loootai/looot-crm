@@ -1,7 +1,9 @@
+import { budgetRefusal } from "./budget";
 import { costOf, LoootError, TERMINAL_STATUSES, type LoootRun } from "./looot";
 import { round6, type PriceMap } from "./jobs";
 import { buildPlan, idempotencyKey, type Plan, type PlanLine, type StepId } from "./plan";
 import { applyResult, type Candidate } from "./apply";
+import { reconcileReservations } from "./reservations";
 import { DEFAULT_WEIGHTS, scoreCompany } from "./score";
 import { fullName, usd4 } from "./format";
 import type { Store } from "./store/types";
@@ -10,6 +12,8 @@ import type { Action, ActionKind, ActionStatus, Company, Contact, Run, Settings 
 /** The one looot call the runner needs. The real client and the demo client both fit. */
 export interface LoootLike {
   runAndWait(jobId: string, input: Record<string, unknown>, idempotencyKey: string, maxCostUsd: number): Promise<LoootRun>;
+  /** Reads a run again. Used to settle reservations of runs that did not finish. The demo client has none. */
+  getRun?(runId: string): Promise<LoootRun>;
 }
 
 export interface ActionRequest {
@@ -27,6 +31,8 @@ export interface ActionResult {
   /** People found by a find_people action. Shown for the user to pick from, saved only on their choice. */
   candidates?: Candidate[];
   replayed: boolean;
+  /** Set when the period budget stopped the action. Says which budget and the numbers. */
+  refusal?: string;
 }
 
 export interface RunnerDeps {
@@ -38,11 +44,13 @@ export interface RunnerDeps {
   now?: () => Date;
 }
 
-export const DEFAULT_SETTINGS: Pick<Settings, "role_keywords" | "default_pages" | "weights" | "action_ceiling_usd"> = {
+export const DEFAULT_SETTINGS: Pick<Settings, "role_keywords" | "default_pages" | "weights" | "action_ceiling_usd" | "daily_budget_usd" | "monthly_budget_usd"> = {
   role_keywords: [],
   default_pages: ["/pricing", "/careers"],
   weights: DEFAULT_WEIGHTS,
   action_ceiling_usd: null,
+  daily_budget_usd: 5,
+  monthly_budget_usd: 50,
 };
 
 export async function loadSettings(store: Store) {
@@ -72,9 +80,14 @@ export function clampMax(requested: number, perActionMaxUsd: number, settingsCei
 
 /**
  * Runs a paid action. The plan is rebuilt here from record ids, never taken from the client.
+ * Order for each run: quote, per-run cap, period budget reservation, then the call.
  * Each run's cap is min(job cap, confirmed max minus what was already spent). When that is below
  * the run's estimate, the run and everything after it is skipped and the action ends as
- * stopped_at_max, so the total can never pass the confirmed max. A run whose end is unknown (still
+ * stopped_at_max, so the total can never pass the confirmed max. Then the cap is reserved against
+ * the workspace's daily and monthly budget in one atomic database step. A refused reservation skips
+ * the run and everything after it, with the budget message in `refusal`. The reservation settles to
+ * the real cost, is released when the run fails or looot refuses it, and stays held while a run is
+ * pending. A run whose end is unknown (still
  * running at the poll deadline, or the request got no answer) keeps its cap held out of what is
  * left, because looot may still charge it. Posting the same actionKey again returns the stored
  * action and calls looot zero times.
@@ -85,6 +98,9 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
 
   const [existing] = await store.all("actions", { action_key: req.actionKey });
   if (existing) return { action: existing, runs: await store.all("runs", { action_id: existing.id }), replayed: true };
+
+  // Reservations from an earlier crash or a run that stayed pending are resolved first.
+  await reconcileReservations({ store, looot, now: now() });
 
   const settings = await loadSettings(store);
   const { plan } = await planFor(store, req, deps.prices);
@@ -106,6 +122,7 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
   /** Caps of runs whose end is unknown. Counted against the max, never shown as spent. */
   let held = 0;
   let stopped = false;
+  let refusal: string | undefined;
   let fatal: string | null = null;
   const outcomes: Run["outcome"][] = [];
   const candidates: Candidate[] = [];
@@ -124,7 +141,7 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
 
   for (const line of plan.lines) {
     if (stopped || fatal) {
-      await record(line, { outcome: "skipped", note: fatal ? "Not run" : "Stopped at the max" });
+      await record(line, { outcome: "skipped", note: fatal ? "Not run" : refusal ? "Stopped at the budget" : "Stopped at the max" });
       continue;
     }
     let input = line.input;
@@ -143,9 +160,31 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
       await record(line, { outcome: "skipped", cap_usd: cap, note: `Left of the max: ${usd4(left)}. This step needs ${usd4(line.quote)}.` });
       continue;
     }
-    const row = await record(line, { status: "running", cap_usd: cap, outcome: null });
+    // Hold the most this call can cost against the daily and monthly budget. Two actions that start
+    // together cannot both pass.
+    const key = idempotencyKey(req.actionKey, line);
+    const reserved = await store.reserveBudget({ actionId: action.id, key, jobId: line.jobId, amountUsd: cap, now: now() });
+    if (!reserved.ok) {
+      if (reserved.reason === "duplicate") {
+        await record(line, { outcome: "skipped", cap_usd: cap, note: "This step already ran or is still in progress." });
+        continue;
+      }
+      stopped = true;
+      refusal = budgetRefusal(reserved.scope, reserved.budget, cap);
+      await record(line, { outcome: "skipped", cap_usd: cap, note: refusal });
+      continue;
+    }
+    let row: Run;
+    try {
+      row = await record(line, { status: "running", cap_usd: cap, outcome: null });
+    } catch (e) {
+      await store.releaseReservation(key, now());
+      throw e;
+    }
     outcomes.pop();
     let patch: Partial<Run>;
+    /** What happens to the reservation: the run ended (settle), failed or was refused (release), is pending (hold) or has no answer (keep). */
+    let resolution: "settle" | "release" | "hold" | "keep" = "keep";
     try {
       const run = await looot.runAndWait(line.jobId, input, row.idempotency_key, cap);
       const cost = round6(Math.max(0, costOf(run) ?? 0));
@@ -155,6 +194,7 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
         if (applied.email !== undefined) found.set(line.targetId, { email: applied.email });
         if (applied.candidates) candidates.push(...applied.candidates);
         patch = { looot_run_id: run.runId, status: run.status, outcome: applied.outcome, cost_usd: cost, note: applied.note ?? null };
+        resolution = "settle";
       } else {
         const blocked = run.status === "blocked";
         const open = !TERMINAL_STATUSES.has(run.status);
@@ -163,7 +203,9 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
           ? `The run did not finish in time (status ${run.status}). It may still complete, so ${usd4(cap)} of the max is held.`
           : (run.error?.message ?? (blocked ? "Balance too low. Top up at looot.ai" : (TERMINAL_HINT[run.status] ?? "The run failed.")));
         if (blocked) fatal = msg;
-        patch = { looot_run_id: run.runId, status: run.status, outcome: "failed", cost_usd: cost, error: msg };
+        // A run that has not ended is not a failure and not free: no outcome yet, and its reservation stays.
+        patch = { looot_run_id: run.runId, status: run.status, outcome: open ? null : "failed", cost_usd: cost, error: msg };
+        resolution = open ? "hold" : cost > 0 ? "settle" : "release";
       }
     } catch (e) {
       const err = e instanceof LoootError ? e : null;
@@ -172,9 +214,15 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
       // looot answered with a refusal (4xx, or no token to send): nothing ran. Anything else may have reached looot.
       const refused = !!err && (err.code === "missing_token" || (err.status >= 400 && err.status < 500));
       if (!refused) held = round6(held + cap);
-      patch = { status: "failed", outcome: "failed", cost_usd: 0, error: refused ? msg : `${msg}. No answer came back, so ${usd4(cap)} of the max is held.` };
+      patch = refused
+        ? { status: "failed", outcome: "failed", cost_usd: 0, error: msg }
+        : { status: "no_answer", outcome: null, cost_usd: 0, error: `${msg}. No answer came back, so ${usd4(cap)} of the max is held.` };
+      resolution = refused ? "release" : "keep";
     }
     await store.update("runs", row.id, patch);
+    if (resolution === "settle") await store.settleReservation(key, now());
+    else if (resolution === "release") await store.releaseReservation(key, now());
+    else if (resolution === "hold" && patch.looot_run_id) await store.holdReservation(key, patch.looot_run_id);
     outcomes.push(patch.outcome ?? null);
     if (line.targetType === "company" && req.kind === "intent_refresh") touchedCompanies.add(line.targetId);
     const t = perTarget.get(line.targetId) ?? { label: line.targetLabel, type: line.targetType, cost: 0, notes: [] };
@@ -191,7 +239,9 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
   const ran = outcomes.filter((o) => o && o !== "skipped");
   const status: ActionStatus = stopped
     ? "stopped_at_max"
-    : !ran.length || ran.every((o) => o === "failed")
+    : outcomes.some((o) => o === null)
+      ? "partial"
+      : !ran.length || ran.every((o) => o === "failed")
       ? plan.lines.length
         ? "failed"
         : "done"
@@ -199,7 +249,7 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
         ? "done"
         : "partial";
   action = (await store.update("actions", action.id, { status, actual_usd: Math.min(spent, max), finished_at: now().toISOString() })) ?? action;
-  return { action, runs: await store.all("runs", { action_id: action.id }), candidates: req.kind === "find_people" ? candidates : undefined, replayed: false };
+  return { action, runs: await store.all("runs", { action_id: action.id }), candidates: req.kind === "find_people" ? candidates : undefined, replayed: false, refusal };
 }
 
 const TERMINAL_HINT: Record<string, string> = {

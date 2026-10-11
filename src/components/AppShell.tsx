@@ -62,7 +62,7 @@ export type ShellNavItem = {
   sub?: { items: ShellSubItem[]; max?: number };
 };
 export type ShellNavSection = { heading?: string; items: ShellNavItem[] };
-export type ShellSpend = { label: string; spent: string; cap?: string; /** 0 to 1, drawn as a bar. */ ratio?: number };
+export type ShellSpend = { label: string; spent: string; cap?: string; /** 0 to 1, drawn as a bar. */ ratio?: number; /** Extra rows under the bar, for example a budget: used, held, left. */ lines?: { label: string; value: string }[] };
 export type AppShellProps = {
   appName: string;
   nav: ShellNavSection[];
@@ -309,6 +309,12 @@ export function AppShell({ appName, nav, githubHref, docsHref = "https://docs.lo
                   <span style={{ width: `${Math.round(Math.min(1, Math.max(0, spend.ratio)) * 100)}%` }} />
                 </div>
               )}
+              {spend.lines?.map((l) => (
+                <p key={l.label} className="ls-label ls-spend-line">
+                  <span>{l.label}</span>
+                  <strong>{l.value}</strong>
+                </p>
+              ))}
             </div>
           )}
           {demoLabel && (

@@ -168,6 +168,10 @@ export interface Settings extends Base {
   default_pages: string[];
   weights: Weights;
   action_ceiling_usd: number | null;
+  /** The most the whole workspace may spend in one UTC day. Reserved against before every paid call. */
+  daily_budget_usd: number;
+  /** The most the whole workspace may spend in one UTC month. Reserved against before every paid call. */
+  monthly_budget_usd: number;
 }
 
 export interface Tables {

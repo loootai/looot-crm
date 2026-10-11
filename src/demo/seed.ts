@@ -309,6 +309,8 @@ export function seedDemo(now: Date = new Date()): DemoData {
     default_pages: ["/pricing", "/careers"],
     weights: { ...DEFAULT_WEIGHTS },
     action_ceiling_usd: null,
+    daily_budget_usd: 5,
+    monthly_budget_usd: 50,
   });
 
   // Signals first, so each company's score is computed from them and never drifts from the rule.

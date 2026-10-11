@@ -2,6 +2,21 @@
 
 Built from the GitHub release notes. Each version links to its release page.
 
+## 0.1.5 (2026-10-11)
+
+Spend limits across actions. Before this version nothing in the database limited what one workspace spent in a day or a month. Each action was capped, but the only limits across actions were an in-memory rate limit (per server instance) and the balance on your looot token.
+
+- New daily and monthly budget for the whole workspace (`settings.daily_budget_usd`, default $5, and `settings.monthly_budget_usd`, default $50). Only the owner changes them, in Settings. A run request cannot, and budget fields in a request are ignored.
+- Atomic reservation. Before each paid call the app quotes the price, applies the per-action max and the per-run cap, then calls `reserve_budget`, which locks the owner's settings row and reserves the call's cap if spent + reserved + amount fits both budgets. Two actions that start together cannot both pass.
+- A completed call settles to its real cost. A failed call, or one looot refused, releases the reservation. A pending call keeps it, is not written as failed at $0 and does not give budget back early.
+- Reservations older than 15 minutes are reconciled against `GET /v1/runs/{id}` when an action next starts. A run that is still pending, or cannot be fetched, stays reserved for 24 hours, then it is released.
+- The sidebar spend panel and the Spend page show used, held and left for today and the month. When a budget is reached the action stops with a message that names the period and the numbers.
+- The per-run cap and the per-action max are unchanged.
+
+Migration: apply `supabase/migrations/20261011000000_period_budget.sql` before you deploy. It adds two columns and a table and drops nothing. Without it paid actions fail before any call. The README setup step lists both migration files.
+
+Upgrade note: the looot token balance is still the final limit. Use a dedicated token and fund it with what you are willing to spend.
+
 ## 0.1.4 (2026-10-11)
 
 Security fix. Versions before 0.1.4 let any signed-in Supabase user use the workspace. If your Supabase project allows open sign-ups (the default for a new project), a stranger could create an account, read your data, change settings and spend your `LOOOT_TOKEN`.

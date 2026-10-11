@@ -1,5 +1,6 @@
 import type { TableName, Tables } from "../types";
 import { DEFAULT_WEIGHTS } from "../score";
+import type { BudgetStatus, Reservation, ReserveRequest, ReserveResult } from "../budget";
 
 /**
  * The one data interface the app uses. Two implementations: Supabase (row level security does the
@@ -15,6 +16,23 @@ export interface Store {
   insertIgnore<T extends TableName>(table: T, rows: Partial<Tables[T]>[], conflict: (keyof Tables[T])[]): Promise<Tables[T][]>;
   update<T extends TableName>(table: T, id: string, patch: Partial<Tables[T]>): Promise<Tables[T] | null>;
   remove(table: TableName, ids: string[]): Promise<number>;
+
+  /**
+   * Holds the most one paid call can cost against the daily and the monthly budget, in one atomic
+   * step. Two simultaneous callers cannot both pass. The budgets come from the settings row, never
+   * from the caller.
+   */
+  reserveBudget(req: ReserveRequest): Promise<ReserveResult>;
+  /** The run row holds the real cost now. The reservation stops counting. Only a reserved row changes. */
+  settleReservation(key: string, at: Date): Promise<void>;
+  /** The call failed or was refused. The reservation stops counting. Only a reserved row changes. */
+  releaseReservation(key: string, at: Date): Promise<void>;
+  /** The call is accepted but not finished. Remembers the looot run id; the reservation keeps counting. */
+  holdReservation(key: string, loootRunId: string): Promise<void>;
+  /** Reserved rows past their soft expiry, oldest first. */
+  listExpiredReservations(at: Date): Promise<Reservation[]>;
+  /** Used, held and left for today and this month. */
+  budgetStatus(at: Date): Promise<BudgetStatus>;
 }
 
 /** Column defaults, the same values the migration sets. The demo store applies them on insert. */
@@ -64,5 +82,5 @@ export const ROW_DEFAULTS: { [T in TableName]: Partial<Tables[T]> } = {
   score_history: {},
   actions: { target_count: 1, target_label: null, estimate_usd: 0, actual_usd: 0, status: "running", finished_at: null },
   runs: { step: null, target_type: null, target_id: null, looot_run_id: null, status: null, outcome: null, cap_usd: null, cost_usd: 0, error: null, note: null },
-  settings: { role_keywords: [], default_pages: ["/pricing", "/careers"], weights: DEFAULT_WEIGHTS, action_ceiling_usd: null },
+  settings: { role_keywords: [], default_pages: ["/pricing", "/careers"], weights: DEFAULT_WEIGHTS, action_ceiling_usd: null, daily_budget_usd: 5, monthly_budget_usd: 50 },
 };

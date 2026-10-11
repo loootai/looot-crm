@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { TABLE_NAMES, type TableName, type Tables } from "../types";
+import { dayStart, monthStart, overBudget, RESERVATION_HARD_SECONDS, RESERVATION_SOFT_SECONDS, windowOf, type BudgetStatus, type Reservation, type ReserveRequest, type ReserveResult } from "../budget";
 import { ROW_DEFAULTS, type Store } from "./types";
 
 export type DemoData = { [T in TableName]: Tables[T][] };
@@ -15,6 +16,7 @@ export function emptyData(): DemoData {
  */
 export class MemoryStore implements Store {
   readonly demo = true;
+  #res: Reservation[] = [];
   constructor(readonly data: DemoData = emptyData()) {}
 
   async all<T extends TableName>(table: T, where?: Partial<Tables[T]>): Promise<Tables[T][]> {
@@ -67,6 +69,67 @@ export class MemoryStore implements Store {
     return removed;
   }
 
+  #numbers(at: Date) {
+    const [settings] = this.data.settings;
+    const day = dayStart(at).toISOString();
+    const month = monthStart(at).toISOString();
+    let spentDay = 0;
+    let spentMonth = 0;
+    for (const r of this.data.runs) {
+      if (r.created_at >= day) spentDay += r.cost_usd;
+      if (r.created_at >= month) spentMonth += r.cost_usd;
+    }
+    return {
+      dailyBudgetUsd: settings?.daily_budget_usd ?? ROW_DEFAULTS.settings.daily_budget_usd!,
+      monthlyBudgetUsd: settings?.monthly_budget_usd ?? ROW_DEFAULTS.settings.monthly_budget_usd!,
+      spentDayUsd: spentDay,
+      spentMonthUsd: spentMonth,
+      reservedUsd: this.#res.filter((x) => x.state === "reserved").reduce((n, x) => n + x.amountUsd, 0),
+    };
+  }
+
+  async budgetStatus(at: Date): Promise<BudgetStatus> {
+    const n = this.#numbers(at);
+    return { daily: windowOf(n.dailyBudgetUsd, n.spentDayUsd, n.reservedUsd), monthly: windowOf(n.monthlyBudgetUsd, n.spentMonthUsd, n.reservedUsd) };
+  }
+
+  // No await inside the next methods, so the check and the write cannot interleave with another caller.
+  async reserveBudget(req: ReserveRequest): Promise<ReserveResult> {
+    const n = this.#numbers(req.now);
+    const budget: BudgetStatus = { daily: windowOf(n.dailyBudgetUsd, n.spentDayUsd, n.reservedUsd), monthly: windowOf(n.monthlyBudgetUsd, n.spentMonthUsd, n.reservedUsd) };
+    if (this.#res.some((x) => x.key === req.key)) return { ok: false, reason: "duplicate" };
+    const scope = overBudget({ ...n, amountUsd: req.amountUsd });
+    if (scope) return { ok: false, reason: "budget", scope, budget };
+    this.#res.push({
+      key: req.key,
+      actionId: req.actionId,
+      jobId: req.jobId,
+      amountUsd: req.amountUsd,
+      state: "reserved",
+      loootRunId: null,
+      createdAt: req.now.toISOString(),
+      expiresAt: new Date(req.now.getTime() + RESERVATION_SOFT_SECONDS * 1000).toISOString(),
+      hardExpiresAt: new Date(req.now.getTime() + RESERVATION_HARD_SECONDS * 1000).toISOString(),
+    });
+    return { ok: true, budget };
+  }
+  async settleReservation(key: string): Promise<void> {
+    const r = this.#res.find((x) => x.key === key && x.state === "reserved");
+    if (r) r.state = "settled";
+  }
+  async releaseReservation(key: string): Promise<void> {
+    const r = this.#res.find((x) => x.key === key && x.state === "reserved");
+    if (r) r.state = "released";
+  }
+  async holdReservation(key: string, loootRunId: string): Promise<void> {
+    const r = this.#res.find((x) => x.key === key && x.state === "reserved");
+    if (r) r.loootRunId = loootRunId;
+  }
+  async listExpiredReservations(at: Date): Promise<Reservation[]> {
+    const t = at.toISOString();
+    return this.#res.filter((x) => x.state === "reserved" && x.expiresAt <= t).map((x) => ({ ...x }));
+  }
+
   /** Mirrors the foreign keys of the migration: cascade or set null. */
   #cascade(table: TableName, ids: Set<string>) {
     const d = this.data;
@@ -90,6 +153,9 @@ export class MemoryStore implements Store {
       d.deal_contacts = d.deal_contacts.filter((x) => !ids.has(x.deal_id));
       for (const a of d.activities) if (a.deal_id && ids.has(a.deal_id)) a.deal_id = null;
     }
-    if (table === "actions") d.runs = d.runs.filter((r) => !ids.has(r.action_id));
+    if (table === "actions") {
+      d.runs = d.runs.filter((r) => !ids.has(r.action_id));
+      this.#res = this.#res.filter((x) => !ids.has(x.actionId));
+    }
   }
 }

@@ -35,7 +35,7 @@ export async function resolveGate(): Promise<Gate> {
   if (state === "setup") return { kind: "setup" };
   if (state === "denied") return { kind: "denied", email };
   const name = (data.user.user_metadata?.full_name as string | undefined) ?? email.split("@")[0] ?? "You";
-  return { kind: "ok", session: { store: new SupabaseStore(db), user: { id: data.user.id, email, name } } };
+  return { kind: "ok", session: { store: new SupabaseStore(db, data.user.id), user: { id: data.user.id, email, name } } };
 }
 
 /** The store for this request, or null when nobody is signed in or the user is not on the allow-list. */

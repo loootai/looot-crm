@@ -61,6 +61,7 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
   const [phase, setPhase] = React.useState<Phase>("loading");
   const [quote, setQuote] = React.useState<Quote | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [refusal, setRefusal] = React.useState<string | null>(null);
   const [off, setOff] = React.useState<Set<StepId>>(new Set());
   const [max, setMax] = React.useState("");
   const [touched, setTouched] = React.useState(false);
@@ -143,6 +144,7 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
     if (!quote || blocked) return;
     setPhase("running");
     setError(null);
+    setRefusal(null);
     const steps = rows.map((r) => r.step);
     let stop = false;
     const poll = async () => {
@@ -169,6 +171,7 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
       if (!res.ok) throw new Error(body?.error?.message ?? "The action could not start.");
       setRuns(body.runs);
       setAction(body.action);
+      setRefusal(body.refusal ?? null);
       setPhase("done");
       router.refresh();
       req.onDone?.(body);
@@ -256,6 +259,12 @@ function QuoteDialog({ req, onClose }: { req: QuoteRequest & { actionKey: string
                       })}
                     </tbody>
                   </table>
+                </div>
+              )}
+              {refusal && (
+                <div className="flex items-start gap-3 border-t border-border px-5 py-4" role="alert">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden />
+                  <p className="text-13">{refusal}</p>
                 </div>
               )}
               {quote.rows.length > 0 && !ran && (

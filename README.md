@@ -81,13 +81,17 @@ Then open a company, go to the Intent tab and press Refresh on one signal. The q
 - `BULK_MAX_RECORDS` defaults to 50 records per bulk action.
 - A full refresh of one account is about $0.02 at list price. Enriching one contact with email, verification and phone is about $0.05. Finding 10 more people is about $0.004. The tables are in [looot jobs and prices](#looot-jobs-and-prices).
 - A failed, blocked or empty call is recorded at its real cost, normally $0. A failed call is not charged.
+- **Period budget.** The owner sets a daily and a monthly budget for the whole workspace in Settings (defaults $5 a day and $50 a month, UTC). They live in the `settings` table. The request that starts an action cannot carry a budget, and the server ignores any budget fields in it.
+- **Reservation.** Before each paid call the app quotes the price, applies the per-action max and the per-run cap, then reserves the call's cap, the most looot may charge for it, in one database step. The step locks your settings row, adds spent + already reserved + this amount, and refuses if that passes the daily or the monthly budget. Two actions that start at the same moment cannot both pass.
+- **What a reservation means.** It is money set aside for a call that has not finished, and it counts against the budget as if it were spent. A completed call settles to its real cost. A failed call, or one looot refused, releases it. A call looot accepted but did not finish (`queued`, `running`, `pending_provider`, `reconciliation_pending`) keeps its reservation. It is not written as failed and it does not give budget back. The sidebar and the Spend page show used, held and left for today and for the month. When a budget is reached the action stops, the remaining steps are skipped with the reason, and the dialog says which budget and the numbers.
+- **Crashes and slow runs.** A reservation older than 15 minutes is checked against the run (`GET /v1/runs/{id}`) the next time an action starts. A finished run is settled to its real cost or released. A run that is still pending, or cannot be fetched (including a request that got no answer, since no run id came back), stays reserved until 24 hours after it was made, then it is released. A run that finishes after that is not counted, so keep the looot token balance as the last limit.
 
 ## Run the web app with sign-in
 
 The app uses Supabase Auth (magic link and Google) and a Postgres database. There is no local Docker stack in these steps.
 
 1. Create a project in the Supabase dashboard. In Project Settings, API, copy the project URL into `NEXT_PUBLIC_SUPABASE_URL` and the anon key into `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local`.
-2. Apply the schema. There is one migration, `supabase/migrations/20261009000000_init.sql`. Either link and push from a clone of this repo:
+2. Apply the schema. There are two migrations, `supabase/migrations/20261009000000_init.sql` and `supabase/migrations/20261011000000_period_budget.sql` (the daily and monthly budget columns, the `budget_reservations` table and its functions, additive). Either link and push from a clone of this repo:
 
    ```bash
    npx supabase@2.118.0 login
@@ -95,7 +99,7 @@ The app uses Supabase Auth (magic link and Google) and a Postgres database. Ther
    npx supabase@2.118.0 db push
    ```
 
-   Or open the SQL editor in the Supabase dashboard, paste the whole file and run it.
+   Or open the SQL editor in the Supabase dashboard, paste each file in order and run it. If you already run 0.1.4, apply only `20261011000000_period_budget.sql` before you deploy 0.1.5. Without it paid actions fail with a missing function error and make no call.
 3. In Supabase, Authentication, URL Configuration, add these redirect URLs. The app sends users to `<origin>/auth/callback` after the magic link or Google sign-in (`src/app/auth/callback/route.ts`).
    - `http://localhost:3000/auth/callback` for `npm run dev`
    - `https://<your-app-domain>/auth/callback` for the deployed app
@@ -199,7 +203,7 @@ The app calls jobs, not pinned endpoints, so looot picks the provider and the re
 
 1. Every paid action first calls `POST /api/quote`. It builds the plan on the server and returns one line per step, the estimate, the worst case, and where the prices came from. It spends nothing.
 2. You confirm the most you want to spend. `POST /api/actions` rebuilds the plan on the server and never trusts prices from the browser.
-3. For each run the cap is the smaller of the job's cap and what is left of your max. If what is left is below the job's quote, the run is skipped and the action ends as "stopped at max". Actual spend cannot pass the max you confirmed. The `actions` table also has a check constraint `actual_usd <= max_cost_usd`.
+3. For each run the cap is the smaller of the job's cap and what is left of your max, and that cap is then reserved against the daily and monthly budget (see Spending). If what is left is below the job's quote, the run is skipped and the action ends as "stopped at max". Actual spend cannot pass the max you confirmed. The `actions` table also has a check constraint `actual_usd <= max_cost_usd`.
 4. Each run carries an idempotency key, `crm:<actionKey>:<job>:<target>`. A retry or a double click replays the stored run and does not charge again. `runs` has a unique index on it.
 5. Steps that would be pointless are not paid for. Verification does not run when no email was found.
 6. A failed, blocked or empty run is recorded with its real cost, which is normally $0.
@@ -219,8 +223,9 @@ How access works:
 - Set `LOOOT_CRM_ALLOWED_EMAILS` (and optionally `LOOOT_CRM_ALLOWED_DOMAINS`). The server checks it in the proxy, in each route handler and in each server action. The email must also be confirmed in Supabase.
 - With no allow-list the app is closed. Signed-in users see the setup page and the APIs answer 503. A signed-in user not on the list sees "not authorised for this workspace" and the APIs answer 403.
 - The allow-list is the only gate for sharing your `LOOOT_TOKEN`: every allowed user spends from the same looot balance. Each user's rows stay separate through row level security (`npm run test:rls`), but the token and the server limits `PER_ACTION_MAX_USD` and `BULK_MAX_RECORDS` are shared.
-- Spending: the cap comes from the server limit and the ceiling in Settings. The number a caller sends can only lower it. Every run rebuilds its plan from record ids on the server (the same plan `/api/quote` shows), and the idempotency key of each looot call is derived from the action key and the step, so a retry never charges twice. Each user gets `SPEND_RATE_LIMIT_PER_MIN` calls a minute on the quote and action routes.
-- The rate limit lives in memory, so each server instance counts for itself. On a host that runs several instances (several Vercel function instances, several containers) a user gets `SPEND_RATE_LIMIT_PER_MIN` calls a minute from each one. Treat it as a per-instance brake. The cap on one action is not in memory: it is the confirmed max clamped to `PER_ACTION_MAX_USD` and to the ceiling stored in your Supabase `settings` row, and the action row records its max. While an action runs, its running total is held in that one process, which is enough because one action is one process. What the app does not have is a total across actions. Nothing in the database limits what one user spends in a day or a month, so the only limits across actions are the per-instance rate limit and the balance on your looot token. Keep a small balance on the token, keep `PER_ACTION_MAX_USD` low, and rate limit at your proxy or CDN if the deployment runs several instances.
+- Spending: the limits are the per-action cap (the server limit and the ceiling in Settings, which a caller can only lower) and the workspace daily and monthly budget, which a run request cannot change at all. Every run rebuilds its plan from record ids on the server (the same plan `/api/quote` shows), and the idempotency key of each looot call is derived from the action key and the step, so a retry never charges twice. Each user gets `SPEND_RATE_LIMIT_PER_MIN` calls a minute on the quote and action routes.
+- The rate limit lives in memory, so each server instance counts for itself. On a host that runs several instances (several Vercel function instances, several containers) a user gets `SPEND_RATE_LIMIT_PER_MIN` calls a minute from each one. Treat it as a per-instance brake. The hard limit is the budget in your database. Before each paid call the `reserve_budget` function locks your `settings` row, adds spent (`runs`) and reserved (`budget_reservations`) and writes the reservation in the same transaction. Actions that start at the same moment on different instances queue on that lock, so what they hold together never passes the budget. Nothing about the budget sits in memory. Before 0.1.5 there was no total across actions: only the per-instance rate limit and the token balance bounded a day or a month of spend. That is fixed.
+- What the budget does not cover. A call that costs more than its cap cannot happen, because looot enforces the cap, but a reservation released after 24 hours for a run that never reported back may have cost money that no row records. And the budget only limits calls this app makes. **The looot token balance is the final limit.** Create a dedicated token for this app and fund it with only what you are willing to spend. If the app, its database or a signed-in user is ever compromised, that balance is all an attacker can spend.
 - `next` on the sign-in callback is accepted only as a same-origin relative path.
 - Turn off public sign-ups in Supabase (Authentication, Sign In / Providers) when only your team will use the app.
 - A stronger option is to put the app behind a VPN or an identity-aware proxy so strangers never reach it.
@@ -228,9 +233,9 @@ How access works:
 
 ## Data model and security
 
-One migration creates 11 tables: `companies`, `contacts`, `deals`, `deal_contacts`, `activities`, `signals`, `signal_baselines`, `score_history`, `actions`, `runs` and `settings`. Every table has `owner_id uuid default auth.uid()`, row level security enabled and forced, and four policies for the `authenticated` role with `owner_id = (select auth.uid())`. The `anon` role can read nothing. The app uses the anon key with the user's session only. There is no service role key.
+The migrations create 12 tables: `companies`, `contacts`, `deals`, `deal_contacts`, `activities`, `signals`, `signal_baselines`, `score_history`, `actions`, `runs`, `settings` and `budget_reservations`. Every table has `owner_id uuid default auth.uid()`, row level security enabled and forced, and four policies for the `authenticated` role with `owner_id = (select auth.uid())`. The `anon` role can read nothing. The app uses the anon key with the user's session only. There is no service role key.
 
-`npm run test:rls` proves it on a throwaway local Postgres started with `initdb` and `pg_ctl` (no Docker, no Supabase project). A second user sees, updates and deletes zero rows of the first user in all 11 tables, cannot insert a row with a forged owner, and cannot point a row at another owner's company. It also checks that an `actions` row with actual above max is refused. The script prints "SKIPPED" when PostgreSQL is not installed.
+`npm run test:rls` proves it on a throwaway local Postgres started with `initdb` and `pg_ctl` (no Docker, no Supabase project). A second user sees, updates and deletes zero rows of the first user in all 12 tables, cannot insert a row with a forged owner, and cannot point a row at another owner's company. It also checks that an `actions` row with actual above max is refused. The script prints "SKIPPED" when PostgreSQL is not installed.
 
 ## Troubleshooting
 
@@ -278,7 +283,7 @@ npm run test:rls
 npm run build
 ```
 
-`npm test` runs 83 vitest tests with looot mocked: the score rule with decay and caps, plan and worst case per action, the max-cost guard (including the hold on a run that has not ended), idempotency, each result reader on fixtures, CSV mapping and duplicates, and the demo seed sums. `scripts/screenshots.mjs` retakes the README screenshots from a running demo with headless Chrome. Start the demo fresh first, since demo writes last until the server restarts.
+`npm test` runs vitest tests with looot mocked: the score rule with decay and caps, plan and worst case per action, the max-cost guard (including the hold on a run that has not ended), the period budget (concurrent reservations on a throwaway Postgres, pending, failed and late runs, expired reservations), idempotency, each result reader on fixtures, CSV mapping and duplicates, and the demo seed sums. `scripts/screenshots.mjs` retakes the README screenshots from a running demo with headless Chrome. Start the demo fresh first, since demo writes last until the server restarts.
 
 Dependencies are pinned to exact versions and `.npmrc` sets `ignore-scripts=true`. `scripts/leak-scan.sh` runs before each commit once you run `git config core.hooksPath .githooks`.
 

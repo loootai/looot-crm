@@ -42,18 +42,23 @@ function TagInput({ id, values, onChange, placeholder, validate }: { id: string;
   );
 }
 
-export function SettingsForm({ initial, perActionMax, bulkMax }: { initial: { role_keywords: string[]; default_pages: string[]; weights: Weights; action_ceiling_usd: number | null }; perActionMax: number; bulkMax: number }) {
+export function SettingsForm({ initial, perActionMax, bulkMax }: { initial: { role_keywords: string[]; default_pages: string[]; weights: Weights; action_ceiling_usd: number | null; daily_budget_usd: number; monthly_budget_usd: number }; perActionMax: number; bulkMax: number }) {
   const router = useRouter();
   const [keywords, setKeywords] = React.useState(initial.role_keywords);
   const [pages, setPages] = React.useState(initial.default_pages);
   const [weights, setWeights] = React.useState<Weights>(initial.weights);
   const [ceiling, setCeiling] = React.useState(initial.action_ceiling_usd === null ? "" : String(initial.action_ceiling_usd));
+  const [daily, setDaily] = React.useState(String(initial.daily_budget_usd));
+  const [monthly, setMonthly] = React.useState(String(initial.monthly_budget_usd));
   const [pending, start] = React.useTransition();
+  const dailyNum = daily.trim() === "" ? NaN : Number(daily);
+  const monthlyNum = monthly.trim() === "" ? NaN : Number(monthly);
+  const budgetError = !Number.isFinite(dailyNum) || dailyNum < 0 || dailyNum > 9999 || !Number.isFinite(monthlyNum) || monthlyNum < 0 || monthlyNum > 9999 ? "Enter amounts from 0 to 9999." : null;
   const ceilingNum = ceiling.trim() ? Number(ceiling) : null;
   const ceilingError = ceilingNum !== null && (!Number.isFinite(ceilingNum) || ceilingNum <= 0) ? "Enter an amount above zero, or leave it empty." : ceilingNum !== null && ceilingNum > perActionMax ? `The server limit is ${usd2(perActionMax)}. A higher value here has no effect.` : null;
   const save = () =>
     start(async () => {
-      const res = await saveSettings({ role_keywords: keywords, default_pages: pages, weights, action_ceiling_usd: ceilingNum });
+      const res = await saveSettings({ role_keywords: keywords, default_pages: pages, weights, action_ceiling_usd: ceilingNum, daily_budget_usd: dailyNum, monthly_budget_usd: monthlyNum });
       if (!res.ok) return void toast.error(res.error);
       toast("Settings saved");
       router.refresh();
@@ -91,13 +96,25 @@ export function SettingsForm({ initial, perActionMax, bulkMax }: { initial: { ro
           <div className="flex justify-between border-b border-border pb-2"><dt className="text-muted-foreground">Most records per action <span className="font-mono text-xs">BULK_MAX_RECORDS</span></dt><dd className="tnum font-mono">{bulkMax}</dd></div>
         </dl>
         <p className="mt-2 text-xs text-muted-foreground">These two are set in the server environment and are read-only here.</p>
+        <div className="mt-6 max-w-xl border-t border-border pt-4">
+          <h3 className="text-13 font-semibold">Budget for the whole workspace</h3>
+          <p className="mt-1 text-xs text-muted-foreground">Before each paid call the app holds the most that call can cost against both budgets. A run that would pass either one is refused and makes no call. A held amount counts until the run ends. Only you can change these numbers here. A run request cannot.</p>
+          <div className="mt-3 flex flex-wrap gap-4">
+            <Field label="Daily budget (USD, UTC day)" htmlFor="budget-daily" error={budgetError} className="max-w-xs">
+              <Input id="budget-daily" type="number" min={0} max={9999} step={0.5} value={daily} onChange={(e) => setDaily(e.target.value)} className="tnum w-32 font-mono" aria-invalid={!!budgetError} />
+            </Field>
+            <Field label="Monthly budget (USD, UTC month)" htmlFor="budget-monthly" className="max-w-xs">
+              <Input id="budget-monthly" type="number" min={0} max={9999} step={1} value={monthly} onChange={(e) => setMonthly(e.target.value)} className="tnum w-32 font-mono" aria-invalid={!!budgetError} />
+            </Field>
+          </div>
+        </div>
         <Field label="Your ceiling per action (USD)" htmlFor="ceil" hint="Optional. Lowers the most any quote lets you confirm." error={ceilingError} className="mt-4 max-w-xs">
           <Input id="ceil" type="number" min={0} step={0.05} value={ceiling} onChange={(e) => setCeiling(e.target.value)} placeholder={perActionMax.toFixed(2)} className="tnum w-32 font-mono" aria-invalid={!!ceilingError} />
         </Field>
       </section>
 
       <div className="sticky bottom-0 z-10 -mx-4 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur-sm sm:-mx-6 sm:px-6">
-        <Button variant="primary" onClick={save} disabled={pending || (!!ceilingError && ceilingNum !== null && ceilingNum <= 0)}>{pending ? "Saving" : "Save settings"}</Button>
+        <Button variant="primary" onClick={save} disabled={pending || !!budgetError || (!!ceilingError && ceilingNum !== null && ceilingNum <= 0)}>{pending ? "Saving" : "Save settings"}</Button>
       </div>
     </>
   );

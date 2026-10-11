@@ -10,6 +10,7 @@ import { FALLBACK_DATE } from "@/lib/jobs";
 import { fetchPrices } from "@/lib/prices";
 import { priceTable, SPEND_GROUPS, spendData } from "@/lib/queries";
 import { requireSession } from "@/lib/store";
+import type { BudgetWindow } from "@/lib/budget";
 import { MemoryStore } from "@/lib/store/demoStore";
 
 export const metadata: Metadata = { title: "Spend" };
@@ -34,7 +35,7 @@ export default async function SpendPage({ searchParams }: { searchParams: Promis
       </Page>
     );
   }
-  const [data, prices] = await Promise.all([spendData(store.demo && sp.state === "empty" ? new MemoryStore() : store), fetchPrices()]);
+  const [data, prices, budget] = await Promise.all([spendData(store.demo && sp.state === "empty" ? new MemoryStore() : store), fetchPrices(), store.budgetStatus(new Date()).catch(() => null)]);
   const table = priceTable(prices.prices);
   const stopped = data.actions.filter((a) => a.status === "stopped_at_max").length;
   return (
@@ -52,6 +53,31 @@ export default async function SpendPage({ searchParams }: { searchParams: Promis
         <Stat label="Per enriched contact" value={data.perContact === null ? "n/a" : usd4(data.perContact)} note="average, email and phone" />
         <Stat label="Per account refresh" value={data.perRefresh === null ? "n/a" : usd4(data.perRefresh)} note="average, all five signals" />
       </dl>
+
+      {budget && (
+        <section aria-labelledby="budget-h" className="mt-5 border-b border-border pb-5">
+          <h2 id="budget-h" className="text-base font-semibold">Budget</h2>
+          <p className="mt-0.5 text-13 text-muted-foreground">Held is the most the runs still in progress can cost. It counts against the budget until each run ends. Change the budgets in Settings.</p>
+          {(budget.daily.remainingUsd === 0 || budget.monthly.remainingUsd === 0) && (
+            <p role="status" className="mt-2 text-13 font-medium text-danger">
+              The {budget.daily.remainingUsd === 0 ? "daily" : "monthly"} budget is reached. New runs are refused and make no call.
+            </p>
+          )}
+          <dl className="mt-3 grid gap-x-8 gap-y-4 md:grid-cols-2">
+            {([["Today (UTC)", budget.daily], ["This month (UTC)", budget.monthly]] as [string, BudgetWindow][]).map(([label, w]) => (
+              <div key={label}>
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd className="tnum mt-1 flex flex-wrap gap-x-4 font-mono text-13">
+                  <span>{usd4(w.spentUsd)} used</span>
+                  <span>{usd4(w.reservedUsd)} held</span>
+                  <span className={w.remainingUsd === 0 ? "text-danger" : undefined}>{usd4(w.remainingUsd)} left</span>
+                  <span className="text-muted-foreground">of {usd4(w.budgetUsd)}</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
 
       {data.actions.length === 0 ? (
         <EmptyState title="No paid action yet">Enrich a contact or refresh intent on an account and it will show here with its cost.</EmptyState>

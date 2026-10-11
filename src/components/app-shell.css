@@ -222,6 +222,21 @@
   color: var(--ls-side-fg);
   font-variant-numeric: tabular-nums;
 }
+.ls-spend-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--ls-side-mute);
+}
+.ls-spend-line strong {
+  font-family: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 500;
+  color: var(--ls-side-fg);
+  font-variant-numeric: tabular-nums;
+}
 .ls-meter {
   height: 4px;
   margin-top: 6px;

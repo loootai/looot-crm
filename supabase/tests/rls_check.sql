@@ -1,4 +1,4 @@
--- Row level security check for all 11 tables. Run by scripts/test-rls.sh on a throwaway Postgres.
+-- Row level security check for all 12 tables. Run by scripts/test-rls.sh on a throwaway Postgres.
 -- User 1 inserts one row in every table. User 2 must see none of them and must not be able to
 -- insert for user 1, update or delete them.
 grant usage on schema public to authenticated;
@@ -15,6 +15,7 @@ insert into signals (company_id, kind, title, occurred_at, points, dedupe_key) v
 insert into signal_baselines (company_id, kind, key) values ('aaaaaaaa-0000-0000-0000-000000000001', 'tech', 'tech');
 insert into score_history (company_id, score) values ('aaaaaaaa-0000-0000-0000-000000000001', 40);
 insert into settings (role_keywords) values ('{logistics}');
+insert into budget_reservations (action_id, idempotency_key, job_id, amount_usd, expires_at, hard_expires_at) values ('aaaaaaaa-0000-0000-0000-000000000004', 'crm:k1:news.search:x', 'news.search', 0.01, now(), now());
 
 -- The money rule: actual above the confirmed max is refused by the check constraint.
 do $$ begin
@@ -29,7 +30,7 @@ declare
   t text;
   n bigint;
 begin
-  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings'] loop
+  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations'] loop
     execute format('select count(*) from public.%I', t) into n;
     raise notice 'user2 sees % rows in %', n, t;
     execute format('with u as (update public.%I set created_at = now() returning 1) select count(*) from u', t) into n;
@@ -54,7 +55,8 @@ declare
     'insert into signals (owner_id, company_id, kind, title, occurred_at, points, dedupe_key) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000001'', ''news'', ''x'', now(), 1, ''z'')',
     'insert into signal_baselines (owner_id, company_id, kind, key) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000001'', ''site'', ''u'')',
     'insert into score_history (owner_id, company_id, score) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000001'', 1)',
-    'insert into settings (owner_id) values (''11111111-1111-1111-1111-111111111111'')'
+    'insert into settings (owner_id) values (''11111111-1111-1111-1111-111111111111'')',
+    'insert into budget_reservations (owner_id, action_id, idempotency_key, job_id, amount_usd, expires_at, hard_expires_at) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000004'', ''spoof'', ''news.search'', 0.01, now(), now())'
   ];
 begin
   foreach t in array stmts loop
@@ -80,7 +82,7 @@ declare
   t text;
   n bigint;
 begin
-  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings'] loop
+  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations'] loop
     execute format('select count(*) from public.%I', t) into n;
     raise notice 'user1 sees % rows in %', n, t;
   end loop;

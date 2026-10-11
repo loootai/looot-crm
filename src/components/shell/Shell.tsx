@@ -11,6 +11,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/popover";
 import { initials, usd2 } from "@/lib/format";
+import type { BudgetStatus } from "@/lib/budget";
 import type { SearchIndex } from "@/lib/queries";
 import { shouldIgnoreKey } from "./hotkeys";
 
@@ -58,7 +59,7 @@ const SHORTCUTS: [string, string[]][] = [
   ["This list", ["?"]],
 ];
 
-export function Shell({ children, user, demo, index }: { children: React.ReactNode; user: { name: string; email: string }; demo: boolean; index: SearchIndex }) {
+export function Shell({ children, user, demo, index, budget }: { children: React.ReactNode; user: { name: string; email: string }; demo: boolean; index: SearchIndex; budget: BudgetStatus | null }) {
   const path = usePathname();
   const router = useRouter();
   const [palette, setPalette] = React.useState(false);
@@ -127,7 +128,25 @@ export function Shell({ children, user, demo, index }: { children: React.ReactNo
         githubHref="https://github.com/loootai/looot-crm"
         nav={NAV}
         demoLabel={demo ? "Seeded data. No Supabase project, no looot token, no charge." : undefined}
-        spend={balance && balance.balance !== null ? { label: balance.demo ? "looot balance (demo)" : "looot balance", spent: usd2(balance.balance) } : undefined}
+        spend={
+          budget
+            ? {
+                label: balance && balance.balance !== null ? (balance.demo ? "looot balance (demo)" : "looot balance") : "Budget",
+                spent: balance && balance.balance !== null ? usd2(balance.balance) : `${usd2(budget.daily.remainingUsd)} left today`,
+                ratio: budget.daily.budgetUsd > 0 ? (budget.daily.spentUsd + budget.daily.reservedUsd) / budget.daily.budgetUsd : 1,
+                lines: [
+                  { label: `Today of ${usd2(budget.daily.budgetUsd)}`, value: `${usd2(budget.daily.spentUsd)} used` },
+                  { label: "Today held", value: usd2(budget.daily.reservedUsd) },
+                  { label: "Today left", value: usd2(budget.daily.remainingUsd) },
+                  { label: `Month of ${usd2(budget.monthly.budgetUsd)}`, value: `${usd2(budget.monthly.spentUsd)} used` },
+                  { label: "Month held", value: usd2(budget.monthly.reservedUsd) },
+                  { label: "Month left", value: usd2(budget.monthly.remainingUsd) },
+                ],
+              }
+            : balance && balance.balance !== null
+              ? { label: balance.demo ? "looot balance (demo)" : "looot balance", spent: usd2(balance.balance) }
+              : undefined
+        }
         primaryAction={{ href: "/companies?new=1", label: "New company" }}
       >
         <div className="flex h-12 items-center gap-2 border-b border-border bg-background/95 px-4 sm:px-6">

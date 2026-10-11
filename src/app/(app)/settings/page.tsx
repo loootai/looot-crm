@@ -27,7 +27,7 @@ export default async function SettingsPage() {
         <p className="mt-3 max-w-xl text-13 text-muted-foreground">{store.demo ? "Demo account. Nothing you change here leaves this server process." : "One workspace per sign-in. Row level security keeps every row to the account that created it."}</p>
       </section>
       <SettingsForm
-        initial={{ role_keywords: settings.role_keywords, default_pages: settings.default_pages, weights: settings.weights ?? DEFAULT_WEIGHTS, action_ceiling_usd: settings.action_ceiling_usd }}
+        initial={{ role_keywords: settings.role_keywords, default_pages: settings.default_pages, weights: settings.weights ?? DEFAULT_WEIGHTS, action_ceiling_usd: settings.action_ceiling_usd, daily_budget_usd: settings.daily_budget_usd ?? 5, monthly_budget_usd: settings.monthly_budget_usd ?? 50 }}
         perActionMax={limits.perActionMaxUsd}
         bulkMax={limits.bulkMaxRecords}
       />
