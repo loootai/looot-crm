@@ -61,6 +61,9 @@ npm run dev
 | `NEXT_PUBLIC_SUPABASE_URL` | yes | Supabase project URL, used for sign-in and every query | Supabase, Project Settings, API |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes | Supabase anon key. The app uses it with the user's session only, there is no service role key | Supabase, Project Settings, API |
 | `LOOOT_TOKEN` | for paid actions | looot agent token, server only. Without it the CRM works and paid actions say the token is missing | Settings > Agent tokens in looot |
+| `LOOOT_CRM_ALLOWED_EMAILS` | yes, outside demo | Comma separated emails that may use the workspace. Case-insensitive, exact match. With this and the domains variable both empty, the app shows a setup page and refuses data, settings and spending | You choose |
+| `LOOOT_CRM_ALLOWED_DOMAINS` | no | Comma separated email domains that may use the workspace, for example `acme.example`. Exact domain, not a suffix | You choose |
+| `SPEND_RATE_LIMIT_PER_MIN` | no | Calls per user per minute to `/api/quote` and `/api/actions`. Default 30 | Your choice |
 | `LOOOT_API_URL` | no | Defaults to `https://api.looot.ai` | Leave unset |
 | `PER_ACTION_MAX_USD` | no | The most one action may spend. Default 2 | Your choice |
 | `BULK_MAX_RECORDS` | no | The most records one bulk action may touch. Default 50 | Your choice |
@@ -98,7 +101,9 @@ The app uses Supabase Auth (magic link and Google) and a Postgres database. Ther
    - `https://<your-app-domain>/auth/callback` for the deployed app
    Set the Site URL to your deployed app URL.
 4. Optional, for "Continue with Google", turn on the Google provider under Authentication, Sign In / Providers and enter the client id and secret from your own Google Cloud project. Magic link works without it.
-5. Put the `LOOOT_TOKEN` in `.env.local` (see [What you need](#what-you-need)), then `npm run dev` and open http://localhost:3000. Enter your email and click the link you receive.
+5. Set the allow-list in `.env.local`, for example `LOOOT_CRM_ALLOWED_EMAILS=you@example.com`. Without it nobody gets in, because every signed-in Supabase user would otherwise be able to read your data and spend your `LOOOT_TOKEN`.
+6. In Supabase, Authentication, Sign In / Providers, turn off "Allow new users to sign up" if only you and your team will use the app. The allow-list still protects you if you leave sign-ups open, but a closed project also stops strangers from creating accounts and sending magic-link emails from your project.
+7. Put the `LOOOT_TOKEN` in `.env.local` (see [What you need](#what-you-need)), then `npm run dev` and open http://localhost:3000. Enter your email and click the link you receive.
 
 ## Deploy
 
@@ -111,8 +116,10 @@ The app uses Supabase Auth (magic link and Google) and a Postgres database. Ther
    | `NEXT_PUBLIC_SUPABASE_URL` | your Supabase project URL |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | your Supabase anon key |
    | `LOOOT_TOKEN` | your looot agent token |
+   | `LOOOT_CRM_ALLOWED_EMAILS` | the emails that may sign in, comma separated (required) |
+   | `LOOOT_CRM_ALLOWED_DOMAINS` | optional, email domains that may sign in |
 
-   `PER_ACTION_MAX_USD` and `BULK_MAX_RECORDS` are optional.
+   `PER_ACTION_MAX_USD`, `BULK_MAX_RECORDS` and `SPEND_RATE_LIMIT_PER_MIN` are optional. Turn off public sign-ups in your Supabase project too (see the sign-in steps above).
 4. Deploy, then add `https://<your-vercel-domain>/auth/callback` to the Supabase redirect URLs and set the Site URL to the same domain.
 
 The repo has no scheduled workflow. Intent is checked only when you click.
@@ -200,6 +207,23 @@ The app calls jobs, not pinned endpoints, so looot picks the provider and the re
 8. `PER_ACTION_MAX_USD` (default 2) and `BULK_MAX_RECORDS` (default 50) are server limits. Your typed max is clamped to the first, and to the lower ceiling you can set in Settings.
 
 `LOOOT_TOKEN` is read in `src/lib/looot.ts`, `src/lib/api.ts` and the balance route, all of which import `server-only`. There is no `NEXT_PUBLIC_` copy. The build was checked with a fake token: `grep -r` over `.next/static` does not find the value. The variable name does appear there once, inside the error message "LOOOT_TOKEN is not set on the server".
+
+## Securing a deployment
+
+Versions before 0.1.4 let any signed-in Supabase user use the workspace. If your Supabase project allows open sign-ups (the default), a stranger could create an account, read the data, change settings and spend your `LOOOT_TOKEN`. Upgrade and set the allow-list.
+
+What is public: `/login`, `/auth/callback` (the sign-in landing), `/setup` and `/not-authorised` (static messages), and static assets. Everything else is private: every page, `/api/quote`, `/api/actions`, `/api/actions/[key]`, `/api/balance`, `/api/export`, `/api/import` and every server action. An unlisted path is private. The app has no webhook or cron route.
+
+How access works:
+
+- Set `LOOOT_CRM_ALLOWED_EMAILS` (and optionally `LOOOT_CRM_ALLOWED_DOMAINS`). The server checks it in the proxy, in each route handler and in each server action. The email must also be confirmed in Supabase.
+- With no allow-list the app is closed. Signed-in users see the setup page and the APIs answer 503. A signed-in user not on the list sees "not authorised for this workspace" and the APIs answer 403.
+- The allow-list is the only gate for sharing your `LOOOT_TOKEN`: every allowed user spends from the same looot balance. Each user's rows stay separate through row level security (`npm run test:rls`), but the token and the server limits `PER_ACTION_MAX_USD` and `BULK_MAX_RECORDS` are shared.
+- Spending: the cap comes from the server limit and the ceiling in Settings. The number a caller sends can only lower it. Every run rebuilds its plan from record ids on the server (the same plan `/api/quote` shows), and the idempotency key of each looot call is derived from the action key and the step, so a retry never charges twice. Each user gets `SPEND_RATE_LIMIT_PER_MIN` calls a minute on the quote and action routes.
+- `next` on the sign-in callback is accepted only as a same-origin relative path.
+- Turn off public sign-ups in Supabase (Authentication, Sign In / Providers) when only your team will use the app.
+- A stronger option is to put the app behind a VPN or an identity-aware proxy so strangers never reach it.
+- Demo mode (`NEXT_PUBLIC_DEMO=1`) has no sign-in and no real data. Do not set `LOOOT_TOKEN` on a demo deployment.
 
 ## Data model and security
 

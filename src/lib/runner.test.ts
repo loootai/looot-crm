@@ -34,6 +34,11 @@ const req = (over: Partial<ActionRequest>): ActionRequest => ({ actionKey: "3f0c
 const NO_EMAIL = ["p-noor-al-sayed", "p-arjun-subramanian", "p-sunita-dhillon"];
 
 describe("max-cost guard", () => {
+  it("never lets the caller raise the cap above the server limit", async () => {
+    const store = fresh();
+    const out = await executeAction(deps(store, greedy()), req({ targetIds: NO_EMAIL, maxCostUsd: 1000 }));
+    expect(out.action.max_cost_usd).toBe(2);
+  });
   it("stops a 3-contact enrich at the confirmed max when every run charges its full cap", async () => {
     const store = fresh();
     const looot = greedy();

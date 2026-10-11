@@ -6,15 +6,18 @@ import { z } from "zod";
 import { cleanDomain } from "@/lib/format";
 import { contactTimeline, dealDetail, type DealDetail, type TimelineEntry } from "@/lib/queries";
 import { DEFAULT_SETTINGS, loadSettings } from "@/lib/runner";
-import { getSession, IS_DEMO, type Store } from "@/lib/store";
+import { getSession, IS_DEMO, resolveGate, type Store } from "@/lib/store";
 import { serverSupabase } from "@/lib/supabase/server";
 import { STAGE_LABEL, STAGES, TABLE_NAMES, type Stage } from "@/lib/types";
 
 export type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
 async function withStore<T = object>(fn: (store: Store) => Promise<Result<T>>): Promise<Result<T>> {
-  const session = await getSession();
-  if (!session) return { ok: false, error: "Sign in first." };
+  const gate = await resolveGate();
+  if (gate.kind === "setup") return { ok: false, error: "Set LOOOT_CRM_ALLOWED_EMAILS on the server first." };
+  if (gate.kind === "denied") return { ok: false, error: "You are not authorised for this workspace." };
+  if (gate.kind !== "ok") return { ok: false, error: "Sign in first." };
+  const session = gate.session;
   try {
     const out = await fn(session.store);
     if (out.ok) revalidatePath("/", "layout");

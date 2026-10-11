@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { bad, hasToken, sessionOr401 } from "@/lib/api";
+import { bad, rateLimited, hasToken, sessionOr401 } from "@/lib/api";
 import { readLimits } from "@/lib/limits";
 import { quoteRows } from "@/lib/plan";
 import { fetchPrices } from "@/lib/prices";
@@ -10,6 +10,8 @@ import { QuoteSchema } from "@/lib/schemas";
 export async function POST(request: Request) {
   const session = await sessionOr401();
   if (session instanceof NextResponse) return session;
+  const slow = rateLimited("quote", session);
+  if (slow) return slow;
   const parsed = QuoteSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return bad("The request is not valid.");
   const limits = readLimits();

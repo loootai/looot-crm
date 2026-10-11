@@ -1,7 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
+import { accessFor } from "@/lib/access";
 import { NextResponse, type NextRequest } from "next/server";
 
-/** Refreshes the Supabase session cookie on every request and sends signed-out visitors to /login. Does nothing in demo mode. */
+/**
+ * Refreshes the Supabase session cookie on every request. Signed-out visitors go to /login (401 for the API).
+ * Signed-in users who are not on the allow-list go to /not-authorised (403 for the API), and everyone goes to
+ * /setup (503 for the API) while no allow-list is set. Does nothing in demo mode.
+ */
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
   if (process.env.NEXT_PUBLIC_DEMO === "1") {
@@ -10,7 +15,8 @@ export async function proxy(request: NextRequest) {
   }
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     // Not configured yet: the sign-in page explains which variables to set.
-    if (path.startsWith("/login") || path.startsWith("/api/")) return NextResponse.next({ request });
+    if (path.startsWith("/login")) return NextResponse.next({ request });
+    if (path.startsWith("/api/")) return refuse(503, "setup_required", "Supabase is not configured.");
     return NextResponse.redirect(new URL("/login", request.url));
   }
   let response = NextResponse.next({ request });
@@ -25,13 +31,30 @@ export async function proxy(request: NextRequest) {
     },
   });
   const { data } = await supabase.auth.getUser();
-  if (!data.user && !path.startsWith("/login") && !path.startsWith("/auth/") && !path.startsWith("/api/")) {
+  const isApi = path.startsWith("/api/");
+  const open = path.startsWith("/login") || path.startsWith("/auth/");
+  if (!data.user) {
+    if (isApi) return refuse(401, "unauthorized", "Sign in first.");
+    if (open || path === "/setup" || path === "/not-authorised") return response;
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = "";
     return NextResponse.redirect(url);
   }
-  return response;
+  const state = accessFor(data.user);
+  if (state === "ok") {
+    if (path === "/setup" || path === "/not-authorised") return NextResponse.redirect(new URL("/", request.url));
+    return response;
+  }
+  if (path.startsWith("/auth/")) return response;
+  if (isApi) return state === "setup" ? refuse(503, "setup_required", "Set LOOOT_CRM_ALLOWED_EMAILS on the server, then try again.") : refuse(403, "forbidden", "You are not authorised for this workspace.");
+  const target = state === "setup" ? "/setup" : "/not-authorised";
+  if (path === target) return response;
+  return NextResponse.redirect(new URL(target, request.url));
+}
+
+function refuse(status: number, code: string, message: string) {
+  return NextResponse.json({ error: { code, message } }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
 export const config = {

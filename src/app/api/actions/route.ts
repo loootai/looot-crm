@@ -1,7 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
-import { bad, loootForRequest, sessionOr401 } from "@/lib/api";
+import { bad, rateLimited, loootForRequest, sessionOr401 } from "@/lib/api";
 import { readLimits } from "@/lib/limits";
 import { LoootError } from "@/lib/looot";
 import { fetchPrices } from "@/lib/prices";
@@ -18,6 +18,8 @@ export const maxDuration = 300;
 export async function POST(request: Request) {
   const session = await sessionOr401();
   if (session instanceof NextResponse) return session;
+  const slow = rateLimited("actions", session);
+  if (slow) return slow;
   const parsed = ActionSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return bad("The request is not valid.");
   const limits = readLimits();
