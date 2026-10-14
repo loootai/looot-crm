@@ -1,4 +1,6 @@
-<p align="center"><img src="assets/hero.png" alt="looot-crm: an account page with an intent score and five signals, and a pipeline board" width="100%"></p>
+<p align="center"><img src="docs/media/banner.png" alt="looot-crm: an account Intent tab with a score of 54 broken down by signal kind, and the quote dialog that lists each looot job and its price before anything runs" width="100%"></p>
+
+<p align="center"><sub>Logos and names belong to their owners. Public data from a live run on 2026-10-13. No affiliation.</sub></p>
 
 # looot CRM
 
@@ -9,6 +11,16 @@
 An open-source CRM for a sales team of one to five people, with buying signals built in. It has companies, people, deals on a pipeline board and an activity timeline. Each account also has an Intent tab with five public signals (hiring, funding, tech stack, news, site changes) and a score from 0 to 100. Every signal is fetched on demand and shows its price before it runs.
 
 It runs on Next.js and Supabase (auth and Postgres), deploys to Vercel, and gets its data from [looot](https://looot.ai): one key and one prepaid balance for 2,500+ data API endpoints. This project is built on looot. It is not the looot dashboard.
+
+| | |
+|---|---|
+| ![Intent score with its arithmetic](docs/media/card-intent.png) | ![News with the source](docs/media/card-news.png) |
+| ![Quote before a paid run](docs/media/card-quote.png) | ![Accounts ranked by intent](docs/media/card-companies.png) |
+| ![Spend page with every run](docs/media/card-spend.png) | ![Pipeline board, demo data](docs/media/card-pipeline.png) |
+
+![Walkthrough: companies, an Intent tab, the pipeline and the Spend page](docs/media/demo.gif)
+
+[Watch the MP4](docs/media/demo.mp4) (20 seconds).
 
 ## What it replaces
 
@@ -127,6 +139,26 @@ The app uses Supabase Auth (magic link and Google) and a Postgres database. Ther
 4. Deploy, then add `https://<your-vercel-domain>/auth/callback` to the Supabase redirect URLs and set the Site URL to the same domain.
 
 The repo has no scheduled workflow. Intent is checked only when you click.
+
+## Live run
+
+On 2026-10-13 (UTC) the CRM ran against the real looot API for five accounts in the looot market: Clay, Apollo.io, Apify, Attio and HubSpot. The app ran in demo mode with an empty store and the real client switched on locally, so every signal, score and price on the Intent, Today, Companies and Spend screens comes from looot. Nothing in that local setup is committed.
+
+- Calls: 28 paid looot calls in six actions.
+- Charged: $0.1695 in total, read from the Spend page and the run costs.
+- Intent signals: news for all five accounts (8 to 10 headlines each), funding for Clay, Apify and HubSpot, hiring and tech stack for all five.
+- Company enrich: 5 calls, $0.0095.
+
+What was good. The news calls were cheap ($0.00099) and returned real, sourced headlines. The quote and the run log matched on every cheap job.
+
+What was bad.
+- The funding job charged $0.05 per account against a quote of $0.01. The per-run cap ($0.07) held, but the quote undercounts it. The saved price table in `src/lib/jobs.ts` should be checked against this.
+- Funding rounds came back with no dates, so every round counts as found today and scores the full 30 points. Titles such as "Seed Round - HubSpot" for a public company look like a loose match, not a clean history. Treat funding scores as unproven.
+- Company enrich returned a wrong industry for Clay ("maritime") and HubSpot ("renewable energy power generation"). The industry column is hidden in the card images for that reason.
+- Tech stack returned "categories only" for all five accounts: no signal, $0.
+- Hiring matched nothing for four of five accounts. Clay's one match came from a first pass that used the demo seller's keywords (logistics), so it is a miss, not a signal.
+
+Still Demo data: the people (placeholders named Demo Contact), the five deals, their amounts and stages, the user name, and the looot balance in the sidebar.
 
 ## Screens
 
