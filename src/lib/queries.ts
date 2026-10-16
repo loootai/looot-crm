@@ -3,11 +3,10 @@ import { dayDiff, fullName } from "./format";
 import { STEP_JOB, watchedPages } from "./plan";
 import { ageDays, basePoints, decayed, DEFAULT_WEIGHTS, KIND_CAPS, scoreCompany, WINDOW_DAYS, type ScoreResult } from "./score";
 import { loadSettings } from "./runner";
+import { index, isClosed, loadPipelines, primaryPipeline, progress, type PipelineView } from "./pipelines";
 import type { Store } from "./store/types";
 import {
-  OPEN_STAGES,
   SIGNAL_KINDS,
-  STAGES,
   type Action,
   type Activity,
   type Company,
@@ -21,6 +20,9 @@ import {
   type Stage,
   type Weights,
 } from "./types";
+
+/** Whether a deal is still open: its stage is an open stage of its pipeline. A stage the pipeline does not know counts as open. */
+const openIn = (ix: ReturnType<typeof index>) => (d: Pick<Deal, "pipeline_id" | "stage">) => !isClosed(ix.stage(d.pipeline_id, d.stage)?.kind);
 
 const DAY = 86_400_000;
 const byNewest = <T extends { created_at: string }>(a: T, b: T) => (a.created_at < b.created_at ? 1 : -1);
@@ -61,10 +63,11 @@ export interface SearchIndex {
 export async function searchIndex(store: Store): Promise<SearchIndex> {
   const [companies, contacts, deals] = await Promise.all([store.all("companies"), store.all("contacts"), store.all("deals")]);
   const name = new Map(companies.map((c) => [c.id, c.name]));
+  const person = new Map(contacts.map((c) => [c.id, fullName(c)]));
   return {
     companies: companies.map((c) => ({ id: c.id, name: c.name, domain: c.domain })).sort((a, b) => a.name.localeCompare(b.name)),
     people: contacts.map((c) => ({ id: c.id, name: fullName(c), sub: [c.title, c.company_id ? name.get(c.company_id) : null].filter(Boolean).join(", ") })),
-    deals: deals.map((d) => ({ id: d.id, name: d.name, sub: name.get(d.company_id) ?? "" })),
+    deals: deals.map((d) => ({ id: d.id, name: d.name, sub: (d.company_id ? name.get(d.company_id) : null) ?? (d.contact_id ? person.get(d.contact_id) : null) ?? "" })),
   };
 }
 
@@ -79,8 +82,12 @@ export interface CompanyRow {
   score: number;
   spark: number[];
   topSignal: { kind: SignalKind; title: string } | null;
+  /** Open deal value in the primary pipeline's currency. Deals in other currencies are not added. */
   openValueCents: number;
-  bestStage: Stage | null;
+  /** Label of the open deal furthest along its pipeline. */
+  bestStage: string | null;
+  /** "pipelineId:stageKey" of every open deal, for the stage filter. */
+  openStages: string[];
   contacts: number;
   hasEmail: boolean;
   lastActivity: string | null;
@@ -88,7 +95,7 @@ export interface CompanyRow {
 }
 
 export async function companyRows(store: Store, now: Date = new Date()): Promise<CompanyRow[]> {
-  const [companies, contacts, deals, signals, activities, history, settings] = await Promise.all([
+  const [companies, contacts, deals, signals, activities, history, settings, pipelines] = await Promise.all([
     store.all("companies"),
     store.all("contacts"),
     store.all("deals"),
@@ -96,8 +103,13 @@ export async function companyRows(store: Store, now: Date = new Date()): Promise
     store.all("activities"),
     store.all("score_history"),
     loadSettings(store),
+    loadPipelines(store),
   ]);
   const w = settings.weights ?? DEFAULT_WEIGHTS;
+  const ix = index(pipelines);
+  const isOpen = openIn(ix);
+  const currency = primaryPipeline(pipelines)?.currency ?? "USD";
+  const counts = (d: Deal) => !!ix.byId.get(d.pipeline_id)?.trackAmount && ix.byId.get(d.pipeline_id)?.currency === currency;
   const group = <T extends { company_id: string | null }>(rows: T[]) => {
     const m = new Map<string, T[]>();
     for (const r of rows) if (r.company_id) m.set(r.company_id, [...(m.get(r.company_id) ?? []), r]);
@@ -109,9 +121,10 @@ export async function companyRows(store: Store, now: Date = new Date()): Promise
   const ga = group(activities);
   const gh = group(history);
   return companies.map((c) => {
-    const open = (gd.get(c.id) ?? []).filter((d) => OPEN_STAGES.includes(d.stage));
+    const open = (gd.get(c.id) ?? []).filter(isOpen);
     const top = topSignal(gs.get(c.id) ?? [], w, now);
-    const best = open.reduce<Stage | null>((b, d) => (b === null || STAGES.indexOf(d.stage) > STAGES.indexOf(b) ? d.stage : b), null);
+    const furthest = (d: Deal) => progress(ix.byId.get(d.pipeline_id), d.stage);
+    const best = open.reduce<Deal | null>((b, d) => (b === null || furthest(d) > furthest(b) ? d : b), null);
     const acts = ga.get(c.id) ?? [];
     return {
       id: c.id,
@@ -122,8 +135,9 @@ export async function companyRows(store: Store, now: Date = new Date()): Promise
       score: c.score,
       spark: (gh.get(c.id) ?? []).sort((a, b) => (a.at < b.at ? -1 : 1)).slice(-12).map((h) => h.score),
       topSignal: top,
-      openValueCents: open.reduce((s, d) => s + d.amount_cents, 0),
-      bestStage: best,
+      openValueCents: open.filter(counts).reduce((s, d) => s + d.amount_cents, 0),
+      bestStage: best ? ix.label(best.pipeline_id, best.stage) : null,
+      openStages: open.map((d) => `${d.pipeline_id}:${d.stage}`),
       contacts: (gc.get(c.id) ?? []).length,
       hasEmail: (gc.get(c.id) ?? []).some((p) => !!p.email),
       lastActivity: acts.length ? acts.reduce((m, a) => (a.created_at > m ? a.created_at : m), acts[0].created_at) : null,
@@ -288,6 +302,7 @@ export async function contactTimeline(store: Store, contactId: string): Promise<
 
 export interface DealCard {
   id: string;
+  pipelineId: string;
   name: string;
   stage: Stage;
   amountCents: number;
@@ -295,36 +310,56 @@ export interface DealCard {
   nextStep: string | null;
   nextStepDue: string | null;
   position: number;
-  companyId: string;
-  companyName: string;
-  companyDomain: string;
+  companyId: string | null;
+  /** The person the deal is about, in a pipeline of people. */
+  personId: string | null;
+  /** The company name, or the person's name for a deal about a person. */
+  subjectName: string;
+  /** Seed for the monogram: the company domain or the person id. */
+  subjectSeed: string;
+  /** Where the subject opens: the company page or the person drawer. */
+  subjectHref: string;
   score: number;
 }
 
-export async function dealCards(store: Store): Promise<DealCard[]> {
-  const [deals, companies] = await Promise.all([store.all("deals"), store.all("companies")]);
+/** The cards of one pipeline, or of every pipeline when `pipelineId` is not given. */
+export async function dealCards(store: Store, pipelineId?: string): Promise<DealCard[]> {
+  const [deals, companies, contacts] = await Promise.all([store.all("deals", pipelineId ? { pipeline_id: pipelineId } : undefined), store.all("companies"), store.all("contacts")]);
   const co = new Map(companies.map((c) => [c.id, c]));
+  const people = new Map(contacts.map((c) => [c.id, c]));
   return deals
-    .map((d) => ({
-      id: d.id,
-      name: d.name,
-      stage: d.stage,
-      amountCents: d.amount_cents,
-      closeDate: d.close_date,
-      nextStep: d.next_step,
-      nextStepDue: d.next_step_due,
-      position: d.position,
-      companyId: d.company_id,
-      companyName: co.get(d.company_id)?.name ?? "Unknown company",
-      companyDomain: co.get(d.company_id)?.domain ?? "",
-      score: co.get(d.company_id)?.score ?? 0,
-    }))
+    .map((d) => {
+      const company = d.company_id ? co.get(d.company_id) : undefined;
+      const person = d.contact_id ? people.get(d.contact_id) : undefined;
+      const aboutPerson = !d.company_id && !!person;
+      return {
+        id: d.id,
+        pipelineId: d.pipeline_id,
+        name: d.name,
+        stage: d.stage,
+        amountCents: d.amount_cents,
+        closeDate: d.close_date,
+        nextStep: d.next_step,
+        nextStepDue: d.next_step_due,
+        position: d.position,
+        companyId: d.company_id,
+        personId: d.contact_id,
+        subjectName: aboutPerson ? fullName(person!) : (company?.name ?? "Unknown company"),
+        subjectSeed: aboutPerson ? person!.id : (company?.domain ?? ""),
+        subjectHref: aboutPerson ? `/people?contact=${person!.id}` : `/companies/${d.company_id}`,
+        score: company?.score ?? 0,
+      };
+    })
     .sort((a, b) => a.position - b.position);
 }
 
 export interface DealDetail {
   deal: Deal;
-  company: Company;
+  pipeline: PipelineView;
+  /** Null for a deal about a person with no company. */
+  company: Company | null;
+  /** The person a deal is about, in a pipeline of people. */
+  person: Contact | null;
   whyNow: Signal[];
   people: { contact: Contact; role: DealContact["role"] }[];
   timeline: TimelineEntry[];
@@ -333,14 +368,18 @@ export interface DealDetail {
 export async function dealDetail(store: Store, id: string, now: Date = new Date()): Promise<DealDetail | null> {
   const deal = await store.get("deals", id);
   if (!deal) return null;
-  const company = await store.get("companies", deal.company_id);
-  if (!company) return null;
+  const [pipelines, person] = await Promise.all([loadPipelines(store), deal.contact_id ? store.get("contacts", deal.contact_id) : null]);
+  const pipeline = pipelines.find((p) => p.id === deal.pipeline_id);
+  if (!pipeline) return null;
+  const companyId = deal.company_id ?? person?.company_id ?? null;
+  const company = companyId ? await store.get("companies", companyId) : null;
+  if (!company && !person) return null;
   const [links, contacts, activities, signals, deals] = await Promise.all([
     store.all("deal_contacts", { deal_id: id }),
-    store.all("contacts", { company_id: company.id }),
+    company ? store.all("contacts", { company_id: company.id }) : Promise.resolve(person ? [person] : []),
     store.all("activities", { deal_id: id }),
-    store.all("signals", { company_id: company.id }),
-    store.all("deals", { company_id: company.id }),
+    company ? store.all("signals", { company_id: company.id }) : Promise.resolve([] as Signal[]),
+    company ? store.all("deals", { company_id: company.id }) : Promise.resolve([deal]),
   ]);
   const whyNow = signals
     .filter((s) => ageDays(s.occurred_at, now) <= WINDOW_DAYS)
@@ -349,7 +388,9 @@ export async function dealDetail(store: Store, id: string, now: Date = new Date(
   const byId = new Map(contacts.map((c) => [c.id, c]));
   return {
     deal,
+    pipeline,
     company,
+    person,
     whyNow,
     people: links.filter((l) => byId.has(l.contact_id)).map((l) => ({ contact: byId.get(l.contact_id)!, role: l.role })),
     timeline: timelineOf(activities, [], contacts, deals),
@@ -380,7 +421,9 @@ export interface DueItem {
 export interface TodayData {
   groups: SignalGroup[];
   due: DueItem[];
-  stages: { stage: Stage; deals: number; valueCents: number }[];
+  /** The pipeline the money figures come from: the first one that tracks an amount. */
+  pipeline: { id: string; name: string; currency: string; trackAmount: boolean } | null;
+  stages: { stage: Stage; label: string; deals: number; valueCents: number }[];
   openValueCents: number;
   openDeals: number;
   closing30: { deals: number; valueCents: number };
@@ -389,8 +432,11 @@ export interface TodayData {
 }
 
 export async function todayData(store: Store, filter: { kinds?: SignalKind[]; minScore?: number } = {}, now: Date = new Date()): Promise<TodayData> {
-  const [companies, signals, deals, activities, history] = await Promise.all([store.all("companies"), store.all("signals"), store.all("deals"), store.all("activities"), store.all("score_history")]);
+  const [companies, signals, deals, activities, history, pipelines] = await Promise.all([store.all("companies"), store.all("signals"), store.all("deals"), store.all("activities"), store.all("score_history"), loadPipelines(store)]);
   const co = new Map(companies.map((c) => [c.id, c]));
+  const ix = index(pipelines);
+  const isOpen = openIn(ix);
+  const primary = primaryPipeline(pipelines);
   const weekAgo = now.getTime() - 7 * DAY;
   const groups: SignalGroup[] = [];
   const unread = signals.filter((s) => !s.read_at && (!filter.kinds?.length || filter.kinds.includes(s.kind)));
@@ -411,21 +457,26 @@ export async function todayData(store: Store, filter: { kinds?: SignalKind[]; mi
     due.push({ id: a.id, type: "task", title: a.body ?? "Task", dueAt: a.due_at, companyId: a.company_id, companyName: a.company_id ? (co.get(a.company_id)?.name ?? null) : null, dealId: d?.id ?? null, dealName: d?.name ?? null });
   }
   for (const d of deals) {
-    if (!OPEN_STAGES.includes(d.stage) || !d.next_step || !d.next_step_due || dayDiff(d.next_step_due, now) > 0) continue;
-    due.push({ id: d.id, type: "next_step", title: d.next_step, dueAt: d.next_step_due, companyId: d.company_id, companyName: co.get(d.company_id)?.name ?? null, dealId: d.id, dealName: d.name });
+    if (!isOpen(d) || !d.next_step || !d.next_step_due || dayDiff(d.next_step_due, now) > 0) continue;
+    due.push({ id: d.id, type: "next_step", title: d.next_step, dueAt: d.next_step_due, companyId: d.company_id, companyName: d.company_id ? (co.get(d.company_id)?.name ?? null) : null, dealId: d.id, dealName: d.name });
   }
   due.sort((a, b) => (a.dueAt < b.dueAt ? -1 : 1));
 
-  const open = deals.filter((d) => OPEN_STAGES.includes(d.stage));
+  // Money and stages come from one pipeline, so amounts in different currencies are never added up.
+  const openAll = deals.filter(isOpen);
+  const open = primary ? openAll.filter((d) => d.pipeline_id === primary.id) : [];
   const closing = open.filter((d) => d.close_date && dayDiff(d.close_date, now) >= 0 && dayDiff(d.close_date, now) <= 30);
-  const withOpen = [...new Set(open.map((d) => d.company_id))].map((id) => co.get(id)).filter((c): c is Company => !!c);
+  const withOpen = [...new Set(openAll.map((d) => d.company_id))].map((id) => (id ? co.get(id) : undefined)).filter((c): c is Company => !!c);
   return {
     groups,
     due,
-    stages: OPEN_STAGES.map((stage) => {
-      const ds = open.filter((d) => d.stage === stage);
-      return { stage, deals: ds.length, valueCents: ds.reduce((s, d) => s + d.amount_cents, 0) };
-    }),
+    pipeline: primary ? { id: primary.id, name: primary.name, currency: primary.currency, trackAmount: primary.trackAmount } : null,
+    stages: (primary?.stages ?? [])
+      .filter((s) => s.kind === "open")
+      .map((s) => {
+        const ds = open.filter((d) => d.stage === s.key);
+        return { stage: s.key, label: s.label, deals: ds.length, valueCents: ds.reduce((t, d) => t + d.amount_cents, 0) };
+      }),
     openValueCents: open.reduce((s, d) => s + d.amount_cents, 0),
     openDeals: open.length,
     closing30: { deals: closing.length, valueCents: closing.reduce((s, d) => s + d.amount_cents, 0) },

@@ -1,9 +1,11 @@
 /** Row types, one per table in supabase/migrations. Dates are ISO strings. */
 
+/** The stages of the default Sales pipeline, the only stages before 0.2. Other pipelines define their own in pipeline_stages. */
 export const STAGES = ["lead", "qualified", "demo", "proposal", "won", "lost"] as const;
-export type Stage = (typeof STAGES)[number];
+/** A stage key. Which keys exist depends on the deal's pipeline. */
+export type Stage = string;
 export const OPEN_STAGES: Stage[] = ["lead", "qualified", "demo", "proposal"];
-export const STAGE_LABEL: Record<Stage, string> = {
+export const STAGE_LABEL: Record<string, string> = {
   lead: "Lead",
   qualified: "Qualified",
   demo: "Demo",
@@ -89,7 +91,11 @@ export interface Contact extends Base {
 }
 
 export interface Deal extends Base {
-  company_id: string;
+  pipeline_id: string;
+  /** Null for a deal about a person (contact_id set). */
+  company_id: string | null;
+  /** The person a deal is about, in a pipeline of people. */
+  contact_id: string | null;
   name: string;
   stage: Stage;
   amount_cents: number;
@@ -100,6 +106,29 @@ export interface Deal extends Base {
   position: number;
   closed_reason: string | null;
   stage_changed_at: string | null;
+}
+
+export type StageKind = "open" | "won" | "lost";
+export type PipelineSubject = "company" | "person";
+
+export interface Pipeline extends Base {
+  name: string;
+  position: number;
+  /** What a card is about: a company or a person. */
+  subject: PipelineSubject;
+  /** Whether deals in this pipeline carry an amount. */
+  track_amount: boolean;
+  /** ISO 4217 code of the amounts, such as USD or EUR. */
+  currency: string;
+}
+
+export interface PipelineStage extends Base {
+  pipeline_id: string;
+  /** Stable. deals.stage stores it. */
+  key: string;
+  label: string;
+  position: number;
+  kind: StageKind;
 }
 
 export interface DealContact extends Base {
@@ -209,9 +238,14 @@ export interface Tables {
   actions: Action;
   runs: Run;
   settings: Settings;
+  pipelines: Pipeline;
+  pipeline_stages: PipelineStage;
 }
 export type TableName = keyof Tables;
+/** In dependency order: a table only refers to tables before it, so deleting in reverse never hits a foreign key. */
 export const TABLE_NAMES: TableName[] = [
+  "pipelines",
+  "pipeline_stages",
   "companies",
   "contacts",
   "deals",

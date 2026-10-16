@@ -21,18 +21,34 @@ export function usdCap(n: number | null | undefined): string {
   return `$${s}`;
 }
 
-const MONEY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-/** Whole dollars from cents ($84,000). */
-export function money(cents: number): string {
-  return MONEY.format(Math.round(cents / 100));
+const MONEY = new Map<string, Intl.NumberFormat>();
+const moneyFormat = (currency: string) => {
+  let f = MONEY.get(currency);
+  if (!f) {
+    try {
+      f = new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 });
+    } catch {
+      f = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+    }
+    MONEY.set(currency, f);
+  }
+  return f;
+};
+/** The symbol of a currency in en-US: $ for USD, € for EUR, the code for one without a symbol. */
+export const currencySymbol = (currency = "USD") => moneyFormat(currency).formatToParts(0).find((p) => p.type === "currency")?.value ?? currency;
+
+/** Whole units from cents ($84,000, €84,000). USD unless a pipeline says otherwise. */
+export function money(cents: number, currency = "USD"): string {
+  return moneyFormat(currency).format(Math.round(cents / 100));
 }
 
-/** Compact dollars from cents ($84k, $1.2M). */
-export function moneyShort(cents: number): string {
+/** Compact units from cents ($84k, €1.2M). */
+export function moneyShort(cents: number, currency = "USD"): string {
   const d = cents / 100;
-  if (d >= 1e6) return `$${(d / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
-  if (d >= 1e3) return `$${(d / 1e3).toFixed(d % 1000 === 0 ? 0 : 1)}k`;
-  return `$${Math.round(d)}`;
+  const sym = currencySymbol(currency);
+  if (d >= 1e6) return `${sym}${(d / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+  if (d >= 1e3) return `${sym}${(d / 1e3).toFixed(d % 1000 === 0 ? 0 : 1)}k`;
+  return `${sym}${Math.round(d)}`;
 }
 
 const NUM = new Intl.NumberFormat("en-US");

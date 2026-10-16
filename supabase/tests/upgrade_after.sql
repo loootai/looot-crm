@@ -9,6 +9,10 @@ do $$ begin
      and (select (public.budget_status(public.current_workspace(), '2000-01-01', '2000-01-01') -> 'daily' ->> 'spent')::numeric) = 0.01
   then raise notice 'upgrade kept user1 rows'; end if;
 end $$;
+do $$ begin
+  if (select count(*) from pipelines) = 1 and (select p.name || ':' || d.stage from deals d join pipelines p on p.id = d.pipeline_id) = 'Sales:lead'
+     and (select count(*) from pipeline_stages) = 6 then raise notice 'upgrade put deals in Sales'; end if;
+end $$;
 set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
 do $$ begin
   if (select count(*) from companies) = 1 and (select count(*) from contacts) = 0 then raise notice 'upgrade kept user2 apart'; end if;

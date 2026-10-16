@@ -74,6 +74,8 @@ export const ROW_DEFAULTS: { [T in TableName]: Partial<Tables[T]> } = {
     source: "manual",
   },
   deals: {
+    company_id: null,
+    contact_id: null,
     stage: "lead",
     amount_cents: 0,
     currency: "USD",
@@ -91,5 +93,7 @@ export const ROW_DEFAULTS: { [T in TableName]: Partial<Tables[T]> } = {
   score_history: {},
   actions: { target_count: 1, target_label: null, estimate_usd: 0, actual_usd: 0, status: "running", finished_at: null },
   runs: { step: null, target_type: null, target_id: null, looot_run_id: null, status: null, outcome: null, cap_usd: null, cost_usd: 0, error: null, note: null },
+  pipelines: { position: 0, subject: "company", track_amount: true, currency: "USD" },
+  pipeline_stages: { position: 0, kind: "open" },
   settings: { role_keywords: [], default_pages: ["/pricing", "/careers"], weights: DEFAULT_WEIGHTS, action_ceiling_usd: null, daily_budget_usd: 5, monthly_budget_usd: 50 },
 };

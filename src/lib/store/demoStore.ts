@@ -177,7 +177,7 @@ export class MemoryStore implements Store {
     if (table === "companies") {
       const drop = <R extends { id: string; company_id: string | null }>(rows: R[]) => rows.filter((r) => !r.company_id || !ids.has(r.company_id));
       const contactIds = new Set(d.contacts.filter((c) => c.company_id && ids.has(c.company_id)).map((c) => c.id));
-      const dealIds = new Set(d.deals.filter((x) => ids.has(x.company_id)).map((x) => x.id));
+      const dealIds = new Set(d.deals.filter((x) => x.company_id && ids.has(x.company_id)).map((x) => x.id));
       d.contacts = drop(d.contacts);
       d.deals = drop(d.deals);
       d.activities = drop(d.activities);
@@ -187,13 +187,18 @@ export class MemoryStore implements Store {
       d.deal_contacts = d.deal_contacts.filter((x) => !dealIds.has(x.deal_id) && !contactIds.has(x.contact_id));
     }
     if (table === "contacts") {
-      d.deal_contacts = d.deal_contacts.filter((x) => !ids.has(x.contact_id));
+      // A deal about a person goes with the person.
+      const dealIds = new Set(d.deals.filter((x) => x.contact_id && ids.has(x.contact_id)).map((x) => x.id));
+      d.deals = d.deals.filter((x) => !dealIds.has(x.id));
+      d.deal_contacts = d.deal_contacts.filter((x) => !ids.has(x.contact_id) && !dealIds.has(x.deal_id));
+      for (const a of d.activities) if (a.deal_id && dealIds.has(a.deal_id)) a.deal_id = null;
       for (const a of d.activities) if (a.contact_id && ids.has(a.contact_id)) a.contact_id = null;
     }
     if (table === "deals") {
       d.deal_contacts = d.deal_contacts.filter((x) => !ids.has(x.deal_id));
       for (const a of d.activities) if (a.deal_id && ids.has(a.deal_id)) a.deal_id = null;
     }
+    if (table === "pipelines") d.pipeline_stages = d.pipeline_stages.filter((x) => !ids.has(x.pipeline_id));
     if (table === "actions") {
       d.runs = d.runs.filter((r) => !ids.has(r.action_id));
       this.#res = this.#res.filter((x) => !ids.has(x.actionId));

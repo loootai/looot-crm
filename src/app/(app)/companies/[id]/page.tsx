@@ -11,9 +11,9 @@ import { Button } from "@/components/ui/button";
 import { dueLabel, money, num, shortDate } from "@/lib/format";
 import { readLimits } from "@/lib/limits";
 import { fetchPrices } from "@/lib/prices";
+import { index, isClosed, loadPipelines } from "@/lib/pipelines";
 import { companyDetail, personRows } from "@/lib/queries";
 import { requireSession } from "@/lib/store";
-import { OPEN_STAGES, STAGE_LABEL } from "@/lib/types";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
@@ -38,7 +38,16 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
     );
   }
   const { company, deals } = detail;
-  const open = deals.filter((d) => OPEN_STAGES.includes(d.stage));
+  const pipelines = await loadPipelines(store);
+  const ix = index(pipelines);
+  const kindOf = (d: (typeof deals)[number]) => ix.stage(d.pipeline_id, d.stage)?.kind;
+  const amount = (d: (typeof deals)[number]) => {
+    const p = ix.byId.get(d.pipeline_id);
+    return p?.trackAmount ? money(d.amount_cents, p.currency) : "";
+  };
+  const where = (d: (typeof deals)[number]) => (pipelines.length > 1 ? `${ix.byId.get(d.pipeline_id)?.name ?? ""}: ` : "") + ix.label(d.pipeline_id, d.stage);
+  const dealHref = (d: (typeof deals)[number]) => `/pipeline?p=${d.pipeline_id}&deal=${d.id}`;
+  const open = deals.filter((d) => !isClosed(kindOf(d)));
   const people = await personRows(store, company.id);
   const signalCount = detail.sections.reduce((s, x) => s + x.signals.length, 0);
 
@@ -54,8 +63,8 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
           <ul className="mt-1 border-t border-border">
             {open.map((d) => (
               <li key={d.id} className="border-b border-border py-2">
-                <Link href={`/pipeline?deal=${d.id}`} className="block rounded-sm text-13 font-medium hover:underline">{d.name}</Link>
-                <p className="tnum mt-0.5 flex gap-2 text-xs text-muted-foreground"><span>{STAGE_LABEL[d.stage]}</span><span className="font-mono">{money(d.amount_cents)}</span></p>
+                <Link href={dealHref(d)} className="block rounded-sm text-13 font-medium hover:underline">{d.name}</Link>
+                <p className="tnum mt-0.5 flex gap-2 text-xs text-muted-foreground"><span>{where(d)}</span><span className="font-mono">{amount(d)}</span></p>
               </li>
             ))}
           </ul>
@@ -87,7 +96,7 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
           </div>
         </div>
         <ScoreWhy score={detail.score} weights={detail.weights} />
-        <CompanyActions company={{ id: company.id, name: company.name }} />
+        <CompanyActions company={{ id: company.id, name: company.name }} pipelines={pipelines} />
       </header>
 
       <div className="mt-5 grid gap-8 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -109,12 +118,13 @@ export default async function CompanyPage({ params }: { params: Promise<{ id: st
                 <ul className="border-t border-border">
                   {deals.map((d) => {
                     const due = d.next_step_due ? dueLabel(d.next_step_due, now) : null;
-                    const closed = d.stage === "won" || d.stage === "lost";
+                    const kind = kindOf(d);
+                    const closed = isClosed(kind);
                     return (
                       <li key={d.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border py-2.5">
-                        <Link href={`/pipeline?deal=${d.id}`} className="min-w-0 flex-1 basis-64 truncate text-13 font-medium hover:underline">{d.name}</Link>
-                        <Badge tone={d.stage === "won" ? "positive" : d.stage === "lost" ? "muted" : "neutral"}>{STAGE_LABEL[d.stage]}</Badge>
-                        <span className="tnum w-20 text-right font-mono text-xs">{money(d.amount_cents)}</span>
+                        <Link href={dealHref(d)} className="min-w-0 flex-1 basis-64 truncate text-13 font-medium hover:underline">{d.name}</Link>
+                        <Badge tone={kind === "won" ? "positive" : kind === "lost" ? "muted" : "neutral"}>{where(d)}</Badge>
+                        <span className="tnum w-20 text-right font-mono text-xs">{amount(d)}</span>
                         <span className="w-full text-xs text-muted-foreground sm:w-72">
                           {closed ? (d.closed_reason ? `Reason: ${d.closed_reason}` : `Closed ${shortDate(d.close_date)}`) : d.next_step ? (<>{d.next_step}{due && <span className={due.overdue ? "font-medium text-warning" : ""}> · {due.overdue ? due.text : `due ${due.text}`}</span>}</>) : <span className="font-medium text-warning">No next step</span>}
                         </span>

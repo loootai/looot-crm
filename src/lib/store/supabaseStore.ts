@@ -16,6 +16,8 @@ const NUMERIC: Partial<Record<TableName, string[]>> = {
   runs: ["cap_usd", "cost_usd"],
   settings: ["action_ceiling_usd", "daily_budget_usd", "monthly_budget_usd"],
   deals: ["amount_cents", "position"],
+  pipelines: ["position"],
+  pipeline_stages: ["position"],
 };
 
 /** Postgres numeric and bigint columns arrive as strings. Turn them back into numbers. */

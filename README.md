@@ -47,7 +47,7 @@ With no browser (CI, a server), create the token in Settings > Agent tokens and 
 git clone https://github.com/loootai/looot-crm && cd looot-crm && npm install --ignore-scripts && npm run demo
 ```
 
-Open http://localhost:3217. Demo mode needs no Supabase project and no looot token. It runs on seeded data for a made-up seller of dock scheduling software: 14 companies, 41 people, 17 deals and 60 signals, with every date stored as an offset from now so it does not go stale. All company names are invented and every domain ends in `.example`. A "Demo data" badge sits in the top bar. Paid actions show the same quote as the real app, then play a simulated run, and the button says "Run (demo, no charge)". Changes last until the server restarts.
+Open http://localhost:3217. Demo mode needs no Supabase project and no looot token. It runs on seeded data for a made-up seller of dock scheduling software: 14 companies, 41 people, 20 deals on two pipelines (Sales and Partnerships) and 60 signals, with every date stored as an offset from now so it does not go stale. All company names are invented and every domain ends in `.example`. A "Demo data" badge sits in the top bar. Paid actions show the same quote as the real app, then play a simulated run, and the button says "Run (demo, no charge)". Changes last until the server restarts.
 
 The only outside request in demo mode is the free price read from `api.looot.ai`. Set `LOOOT_OFFLINE=1` to skip it and use the saved prices.
 
@@ -103,7 +103,7 @@ Then open a company, go to the Intent tab and press Refresh on one signal. The q
 The app uses Supabase Auth (magic link and Google) and a Postgres database. There is no local Docker stack in these steps.
 
 1. Create a project in the Supabase dashboard. In Project Settings, API, copy the project URL into `NEXT_PUBLIC_SUPABASE_URL` and the anon key into `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local`.
-2. Apply the schema. There are three migrations: `supabase/migrations/20261009000000_init.sql`, `supabase/migrations/20261011000000_period_budget.sql` (the daily and monthly budget columns, the `budget_reservations` table and its functions, additive) and `supabase/migrations/20261016000000_team_workspaces.sql` (team workspaces, see [Teams](#teams)). Either link and push from a clone of this repo:
+2. Apply the schema. There are four migrations: `supabase/migrations/20261009000000_init.sql`, `supabase/migrations/20261011000000_period_budget.sql` (the daily and monthly budget columns, the `budget_reservations` table and its functions, additive), `supabase/migrations/20261016000000_team_workspaces.sql` (team workspaces, see [Teams](#teams)) and `supabase/migrations/20261016100000_pipelines.sql` (several pipelines with their own stages, see [Pipelines](#pipelines)). Either link and push from a clone of this repo:
 
    ```bash
    npx supabase@2.118.0 login
@@ -111,7 +111,7 @@ The app uses Supabase Auth (magic link and Google) and a Postgres database. Ther
    npx supabase@2.118.0 db push
    ```
 
-   Or open the SQL editor in the Supabase dashboard, paste each file in order and run it. If you already run 0.1.4, apply only `20261011000000_period_budget.sql` before you deploy 0.1.5. Without it paid actions fail with a missing function error and make no call. If you already run 0.1.5, apply `20261016000000_team_workspaces.sql` and deploy this version together: the budget functions now take the workspace id, so the old app and the new database do not work with each other.
+   Or open the SQL editor in the Supabase dashboard, paste each file in order and run it. If you already run 0.1.4, apply only `20261011000000_period_budget.sql` before you deploy 0.1.5. Without it paid actions fail with a missing function error and make no call. If you already run 0.1.5, apply `20261016000000_team_workspaces.sql` and `20261016100000_pipelines.sql` and deploy this version together: the budget functions now take the workspace id, so the old app and the new database do not work with each other.
 3. In Supabase, Authentication, URL Configuration, add these redirect URLs. The app sends users to `<origin>/auth/callback` after the magic link or Google sign-in (`src/app/auth/callback/route.ts`).
    - `http://localhost:3000/auth/callback` for `npm run dev`
    - `https://<your-app-domain>/auth/callback` for the deployed app
@@ -255,6 +255,17 @@ Everyone in a workspace works on the same companies, people, deals, signals and 
 - A removed member's rows stay with the team. If they sign in again they start a new, empty workspace.
 - `owner_id` on a row now means the person who created it.
 
+## Pipelines
+
+A workspace can run several boards, each with its own stages: sales, partnerships, sponsors, applicants, or anything else.
+
+- Settings, Pipelines: add one from a template (Sales, Partnerships, Sponsors, Applicants), then rename, add, reorder or remove stages. Each stage is open, closes as won, or closes as lost. Moving a deal to a closing stage asks for the reason, as Won and Lost did before.
+- A pipeline is about companies or about people. A pipeline of people puts one person on each card, for example an applicant, with no company needed.
+- A pipeline can carry a deal value in its own currency, or none (partnerships usually have none).
+- The board has a pipeline switcher. Today counts money in the first pipeline that tracks an amount, so amounts in different currencies are never added together. The Companies table shows each company's open deal that is furthest along, from any pipeline.
+- A stage that still has deals cannot be removed, and a pipeline with deals cannot be deleted. The database enforces both: a deal's stage is a foreign key to a stage of its own pipeline.
+- Upgrading: every workspace with deals gets a Sales pipeline with the six 0.1.x stages, and its deals move into it unchanged. A deal inserted without a pipeline (an older client, an import) goes to the first pipeline.
+
 ## Securing a deployment
 
 Versions before 0.1.4 let any signed-in Supabase user use the workspace. If your Supabase project allows open sign-ups (the default), a stranger could create an account, read the data, change settings and spend your `LOOOT_TOKEN`. Upgrade and set the allow-list.
@@ -277,9 +288,9 @@ How access works:
 
 ## Data model and security
 
-The migrations create 14 tables. Twelve hold data: `companies`, `contacts`, `deals`, `deal_contacts`, `activities`, `signals`, `signal_baselines`, `score_history`, `actions`, `runs`, `settings` and `budget_reservations`. Each has `workspace_id uuid default public.current_workspace()`, `owner_id uuid default auth.uid()` (who created the row, null if that user is deleted), row level security enabled and forced, and four policies for the `authenticated` role with `workspace_id = (select public.current_workspace())`. An insert must also carry the caller's own `owner_id`. Every reference between data tables is a composite foreign key that includes `workspace_id`, so a row can only point at rows of its own workspace. The other two tables, `workspaces` and `workspace_members`, are readable by members and changed only through `join_workspace()`, `invite_member()` and `remove_member()`. The `anon` role can read nothing. The app uses the anon key with the user's session only. There is no service role key.
+The migrations create 16 tables. Fourteen hold data: `pipelines`, `pipeline_stages`, `companies`, `contacts`, `deals`, `deal_contacts`, `activities`, `signals`, `signal_baselines`, `score_history`, `actions`, `runs`, `settings` and `budget_reservations`. Each has `workspace_id uuid default public.current_workspace()`, `owner_id uuid default auth.uid()` (who created the row, null if that user is deleted), row level security enabled and forced, and four policies for the `authenticated` role with `workspace_id = (select public.current_workspace())`. An insert must also carry the caller's own `owner_id`. Every reference between data tables is a composite foreign key that includes `workspace_id`, so a row can only point at rows of its own workspace. The other two tables, `workspaces` and `workspace_members`, are readable by members and changed only through `join_workspace()`, `invite_member()` and `remove_member()`. The `anon` role can read nothing. The app uses the anon key with the user's session only. There is no service role key.
 
-`npm run test:rls` proves it on a throwaway local Postgres started with `initdb` and `pg_ctl` (no Docker, no Supabase project). A second user sees, updates and deletes zero rows of the first user in all 12 data tables, cannot insert a row with a forged owner or workspace, and cannot point a row at another workspace's company. A third user invited by the first sees and edits the first user's rows, cannot change the budget or invite anyone, and loses access when removed. An unconfirmed email cannot claim an invitation. It also checks that an `actions` row with actual above max is refused, and it upgrades a database with 0.1.5 data to team workspaces and checks that every row and the budget carried over. The script prints "SKIPPED" when PostgreSQL is not installed.
+`npm run test:rls` proves it on a throwaway local Postgres started with `initdb` and `pg_ctl` (no Docker, no Supabase project). A second user sees, updates and deletes zero rows of the first user in all 14 data tables, cannot insert a row with a forged owner or workspace, and cannot point a row at another workspace's company. A third user invited by the first sees and edits the first user's rows, cannot change the budget or invite anyone, and loses access when removed. An unconfirmed email cannot claim an invitation. It also checks that an `actions` row with actual above max is refused, that a deal cannot sit in a stage of another pipeline or have neither a company nor a person, and that a stage with deals cannot be deleted. It upgrades a database with 0.1.5 data to team workspaces and checks that every row and the budget carried over and that existing deals landed in the Sales pipeline. The script prints "SKIPPED" when PostgreSQL is not installed.
 
 ## Troubleshooting
 

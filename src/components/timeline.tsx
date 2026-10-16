@@ -162,5 +162,8 @@ function stageText(e: TimelineEntry): string {
   const from = e.meta.from as Stage | null | undefined;
   const to = e.meta.to as Stage | undefined;
   if (!to) return "Stage changed";
-  return from ? `Moved from ${STAGE_LABEL[from]} to ${STAGE_LABEL[to]}` : `Deal created in ${STAGE_LABEL[to]}`;
+  // Labels are saved with the change since pipelines can rename stages. Older entries only have keys.
+  const fromLabel = (e.meta.fromLabel as string | undefined) ?? (from ? (STAGE_LABEL[from] ?? from) : null);
+  const toLabel = (e.meta.toLabel as string | undefined) ?? STAGE_LABEL[to] ?? to;
+  return fromLabel ? `Moved from ${fromLabel} to ${toLabel}` : `Deal created in ${toLabel}`;
 }

@@ -6,6 +6,9 @@ set role authenticated;
 set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 insert into companies (id, name, domain) values ('aaaaaaaa-0000-0000-0000-000000000001', 'Brightwell Logistics', 'brightwell-logistics.example');
 insert into contacts (id, company_id, first_name) values ('aaaaaaaa-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'Adaeze');
+insert into pipelines (id, name) values ('aaaaaaaa-0000-0000-0000-000000000006', 'Sales');
+insert into pipeline_stages (pipeline_id, key, label) values ('aaaaaaaa-0000-0000-0000-000000000006', 'lead', 'Lead');
+-- No pipeline given: the trigger puts the deal in the workspace's first pipeline.
 insert into deals (id, company_id, name) values ('aaaaaaaa-0000-0000-0000-000000000003', 'aaaaaaaa-0000-0000-0000-000000000001', 'Yard scheduling');
 insert into deal_contacts (deal_id, contact_id) values ('aaaaaaaa-0000-0000-0000-000000000003', 'aaaaaaaa-0000-0000-0000-000000000002');
 insert into activities (company_id, kind, body) values ('aaaaaaaa-0000-0000-0000-000000000001', 'note', 'First call');
@@ -24,13 +27,38 @@ do $$ begin
 exception when check_violation then raise notice 'actual above max refused';
 end $$;
 
+-- Pipelines: a deal sits in a stage of its own pipeline, and needs a company or a person.
+do $$ begin
+  if (select pipeline_id from deals where id = 'aaaaaaaa-0000-0000-0000-000000000003') = 'aaaaaaaa-0000-0000-0000-000000000006' then raise notice 'deal took the first pipeline'; end if;
+end $$;
+do $$ begin
+  update deals set stage = 'nope' where id = 'aaaaaaaa-0000-0000-0000-000000000003';
+  raise exception 'STAGE OUTSIDE PIPELINE ACCEPTED';
+exception when foreign_key_violation then raise notice 'stage outside pipeline refused';
+end $$;
+do $$ begin
+  insert into deals (name, stage) values ('Nobody', 'lead');
+  raise exception 'DEAL WITHOUT SUBJECT ACCEPTED';
+exception when check_violation then raise notice 'deal without company or person refused';
+end $$;
+do $$ begin
+  delete from pipeline_stages where key = 'lead';
+  raise exception 'STAGE WITH DEALS DELETED';
+exception when foreign_key_violation then raise notice 'stage with deals kept';
+end $$;
+do $$ begin
+  insert into deals (contact_id, name, stage) values ('aaaaaaaa-0000-0000-0000-000000000002', 'About a person', 'lead');
+  if (select count(*) from deals where contact_id = 'aaaaaaaa-0000-0000-0000-000000000002' and company_id is null) = 1 then raise notice 'deal about a person accepted'; end if;
+  delete from deals where contact_id = 'aaaaaaaa-0000-0000-0000-000000000002' and company_id is null;
+end $$;
+
 set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
 do $$
 declare
   t text;
   n bigint;
 begin
-  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations'] loop
+  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations','pipelines','pipeline_stages'] loop
     execute format('select count(*) from public.%I', t) into n;
     raise notice 'user2 sees % rows in %', n, t;
     execute format('with u as (update public.%I set created_at = now() returning 1) select count(*) from u', t) into n;
@@ -56,7 +84,9 @@ declare
     'insert into signal_baselines (owner_id, company_id, kind, key) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000001'', ''site'', ''u'')',
     'insert into score_history (owner_id, company_id, score) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000001'', 1)',
     'insert into settings (owner_id) values (''11111111-1111-1111-1111-111111111111'')',
-    'insert into budget_reservations (owner_id, action_id, idempotency_key, job_id, amount_usd, expires_at, hard_expires_at) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000004'', ''spoof'', ''news.search'', 0.01, now(), now())'
+    'insert into budget_reservations (owner_id, action_id, idempotency_key, job_id, amount_usd, expires_at, hard_expires_at) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000004'', ''spoof'', ''news.search'', 0.01, now(), now())',
+    'insert into pipelines (owner_id, name) values (''11111111-1111-1111-1111-111111111111'', ''Spoof'')',
+    'insert into pipeline_stages (owner_id, pipeline_id, key, label) values (''11111111-1111-1111-1111-111111111111'', ''aaaaaaaa-0000-0000-0000-000000000006'', ''spoof'', ''Spoof'')'
   ];
 begin
   foreach t in array stmts loop
@@ -82,7 +112,7 @@ declare
   t text;
   n bigint;
 begin
-  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations'] loop
+  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations','pipelines','pipeline_stages'] loop
     execute format('select count(*) from public.%I', t) into n;
     raise notice 'user1 sees % rows in %', n, t;
   end loop;
@@ -114,7 +144,7 @@ declare
   j jsonb := public.join_workspace();
 begin
   if j ->> 'role' = 'member' then raise notice 'member joined'; end if;
-  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations'] loop
+  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations','pipelines','pipeline_stages'] loop
     execute format('select count(*) from public.%I', t) into n;
     raise notice 'member sees % rows in %', n, t;
   end loop;
