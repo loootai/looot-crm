@@ -6,20 +6,20 @@ import { z } from "zod";
 import { cleanDomain } from "@/lib/format";
 import { contactTimeline, dealDetail, type DealDetail, type TimelineEntry } from "@/lib/queries";
 import { DEFAULT_SETTINGS, loadSettings } from "@/lib/runner";
-import { getSession, IS_DEMO, resolveGate, type Store } from "@/lib/store";
+import { getSession, IS_DEMO, resolveGate, type Session, type Store } from "@/lib/store";
 import { serverSupabase } from "@/lib/supabase/server";
-import { STAGE_LABEL, STAGES, TABLE_NAMES, type Stage } from "@/lib/types";
+import { STAGE_LABEL, STAGES, TABLE_NAMES, type Stage, type TeamRefusal, type TeamResult } from "@/lib/types";
 
 export type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
-async function withStore<T = object>(fn: (store: Store) => Promise<Result<T>>): Promise<Result<T>> {
+async function withStore<T = object>(fn: (store: Store, session: Session) => Promise<Result<T>>): Promise<Result<T>> {
   const gate = await resolveGate();
   if (gate.kind === "setup") return { ok: false, error: "Set LOOOT_CRM_ALLOWED_EMAILS on the server first." };
   if (gate.kind === "denied") return { ok: false, error: "You are not authorised for this workspace." };
   if (gate.kind !== "ok") return { ok: false, error: "Sign in first." };
   const session = gate.session;
   try {
-    const out = await fn(session.store);
+    const out = await fn(session.store, session);
     if (out.ok) revalidatePath("/", "layout");
     return out;
   } catch (e) {
@@ -194,9 +194,10 @@ export async function saveSettings(input: z.input<typeof SettingsInput>): Promis
   });
 }
 
-/** Deletes every row the signed-in user owns. The sign-in itself stays. */
+/** Deletes every row in the workspace. Owner only. The sign-ins and the members stay. */
 export async function deleteAllData(confirm: string): Promise<Result> {
-  return withStore(async (store) => {
+  return withStore(async (store, session) => {
+    if (session.workspace.role !== "owner") return { ok: false, error: "Only the workspace owner can delete all data." };
     if (confirm !== "delete") return { ok: false, error: "Type delete to confirm." };
     for (const t of [...TABLE_NAMES].reverse()) {
       const rows = await store.all(t);
@@ -204,6 +205,28 @@ export async function deleteAllData(confirm: string): Promise<Result> {
     }
     return { ok: true };
   });
+}
+
+const TEAM_ERRORS: Record<TeamRefusal, string> = {
+  invalid: "Enter a valid email address.",
+  already: "That email is already in this workspace.",
+  has_workspace: "That person already works in another workspace with data in it. They need to delete that data first, or use another email.",
+  self: "You cannot remove yourself.",
+  not_found: "That email is not in this workspace.",
+  forbidden: "Only the workspace owner can change the team.",
+};
+const team = (r: TeamResult): Result => (r.ok ? { ok: true } : { ok: false, error: TEAM_ERRORS[r.reason] });
+
+export async function inviteMember(email: string): Promise<Result> {
+  return withStore(async (store) => team(await store.inviteMember(z.string().max(254).catch("").parse(email))));
+}
+
+export async function removeMember(email: string): Promise<Result> {
+  return withStore(async (store) => team(await store.removeMember(z.string().max(254).catch("").parse(email))));
+}
+
+export async function renameWorkspace(name: string): Promise<Result> {
+  return withStore(async (store) => team(await store.renameWorkspace(z.string().max(200).catch("").parse(name))));
 }
 
 /** Read for the contact drawer. */

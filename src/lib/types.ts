@@ -30,9 +30,32 @@ export type RunOutcome = "data" | "no_result" | "failed" | "skipped";
 
 interface Base {
   id: string;
-  owner_id?: string;
+  /** The user who created the row. Null when that user was deleted. */
+  owner_id?: string | null;
+  /** The team workspace the row belongs to. Row level security compares it with the signed-in user's. */
+  workspace_id?: string;
   created_at: string;
 }
+
+export type WorkspaceRole = "owner" | "member";
+
+/** A person in the workspace, or an invitation not claimed yet (joined_at null). */
+export interface WorkspaceMember {
+  email: string;
+  role: WorkspaceRole;
+  joined_at: string | null;
+  created_at: string;
+}
+
+/** The workspace of the signed-in user and their role in it. */
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  role: WorkspaceRole;
+}
+
+export type TeamRefusal = "invalid" | "already" | "has_workspace" | "self" | "not_found" | "forbidden";
+export type TeamResult = { ok: true } | { ok: false; reason: TeamRefusal };
 
 export interface Company extends Base {
   name: string;

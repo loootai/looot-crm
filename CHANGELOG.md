@@ -2,6 +2,20 @@
 
 Built from the GitHub release notes. Each version links to its release page.
 
+## Unreleased
+
+Team workspaces. A small team now works in one workspace: the same companies, people, deals, signals and budget.
+
+- New tables `workspaces` and `workspace_members`. Every data table gets `workspace_id`, and row level security compares it with `current_workspace()` instead of comparing `owner_id` with the user.
+- The first sign-in of someone with no invitation creates their own workspace, so a team of one works as before. The owner invites by email in Settings, Team; the invitation is claimed when that email signs in with a confirmed address. The allow-list still decides who can use the app at all.
+- Only the owner invites, removes, renames, changes the daily and monthly budget and deletes all workspace data. The budget rule is also a database trigger.
+- Composite foreign keys now pair every reference with `workspace_id`. The activity links to a contact or deal, and a signal's link to its run, are workspace-scoped too; before, they were plain references.
+- `owner_id` means "created by" and is set to null when that user is deleted, so a member leaving no longer deletes the team's rows.
+- The budget functions take the workspace id. Budgets and spend are per workspace.
+- `npm run test:rls` covers 14 tables, the team rules and an upgrade from 0.1.5 data.
+
+Migration: apply `supabase/migrations/20261016000000_team_workspaces.sql` and deploy this version at the same time. Every existing user gets a workspace of their own as its owner and their rows move into it, so nothing is shared until an owner invites someone.
+
 ## 0.1.5 (2026-10-11)
 
 Spend limits across actions. Before this version nothing in the database limited what one workspace spent in a day or a month. Each action was capped, but the only limits across actions were an in-memory rate limit (per server instance) and the balance on your looot token.

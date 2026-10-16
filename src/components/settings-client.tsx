@@ -42,7 +42,7 @@ function TagInput({ id, values, onChange, placeholder, validate }: { id: string;
   );
 }
 
-export function SettingsForm({ initial, perActionMax, bulkMax }: { initial: { role_keywords: string[]; default_pages: string[]; weights: Weights; action_ceiling_usd: number | null; daily_budget_usd: number; monthly_budget_usd: number }; perActionMax: number; bulkMax: number }) {
+export function SettingsForm({ initial, perActionMax, bulkMax, canEditBudget = true }: { initial: { role_keywords: string[]; default_pages: string[]; weights: Weights; action_ceiling_usd: number | null; daily_budget_usd: number; monthly_budget_usd: number }; perActionMax: number; bulkMax: number; canEditBudget?: boolean }) {
   const router = useRouter();
   const [keywords, setKeywords] = React.useState(initial.role_keywords);
   const [pages, setPages] = React.useState(initial.default_pages);
@@ -98,13 +98,13 @@ export function SettingsForm({ initial, perActionMax, bulkMax }: { initial: { ro
         <p className="mt-2 text-xs text-muted-foreground">These two are set in the server environment and are read-only here.</p>
         <div className="mt-6 max-w-xl border-t border-border pt-4">
           <h3 className="text-13 font-semibold">Budget for the whole workspace</h3>
-          <p className="mt-1 text-xs text-muted-foreground">Before each paid call the app holds the most that call can cost against both budgets. A run that would pass either one is refused and makes no call. A held amount counts until the run ends. Only you can change these numbers here. A run request cannot.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Before each paid call the app holds the most that call can cost against both budgets. A run that would pass either one is refused and makes no call. A held amount counts until the run ends. {canEditBudget ? "Only you, the workspace owner, can change these numbers here. A run request cannot." : "Only the workspace owner can change these numbers. A run request cannot."}</p>
           <div className="mt-3 flex flex-wrap gap-4">
             <Field label="Daily budget (USD, UTC day)" htmlFor="budget-daily" error={budgetError} className="max-w-xs">
-              <Input id="budget-daily" type="number" min={0} max={9999} step={0.5} value={daily} onChange={(e) => setDaily(e.target.value)} className="tnum w-32 font-mono" aria-invalid={!!budgetError} />
+              <Input id="budget-daily" type="number" min={0} max={9999} step={0.5} disabled={!canEditBudget} value={daily} onChange={(e) => setDaily(e.target.value)} className="tnum w-32 font-mono" aria-invalid={!!budgetError} />
             </Field>
             <Field label="Monthly budget (USD, UTC month)" htmlFor="budget-monthly" className="max-w-xs">
-              <Input id="budget-monthly" type="number" min={0} max={9999} step={1} value={monthly} onChange={(e) => setMonthly(e.target.value)} className="tnum w-32 font-mono" aria-invalid={!!budgetError} />
+              <Input id="budget-monthly" type="number" min={0} max={9999} step={1} disabled={!canEditBudget} value={monthly} onChange={(e) => setMonthly(e.target.value)} className="tnum w-32 font-mono" aria-invalid={!!budgetError} />
             </Field>
           </div>
         </div>
@@ -122,7 +122,7 @@ export function SettingsForm({ initial, perActionMax, bulkMax }: { initial: { ro
 
 const EXPORTS: [TableName, string][] = [["companies", "Companies"], ["contacts", "Contacts"], ["deals", "Deals"], ["activities", "Activities"], ["signals", "Signals"], ["actions", "Actions"], ["runs", "Runs"]];
 
-export function DataSection({ demo }: { demo: boolean }) {
+export function DataSection({ demo, owner = true }: { demo: boolean; owner?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [confirm, setConfirm] = React.useState("");
@@ -130,21 +130,23 @@ export function DataSection({ demo }: { demo: boolean }) {
   return (
     <section aria-labelledby="data-h" className="py-6">
       <h2 id="data-h" className="text-base font-semibold">Data</h2>
-      <p className="mt-1 text-13 text-muted-foreground">Export any table as CSV. Your data stays in your own Supabase project.</p>
+      <p className="mt-1 text-13 text-muted-foreground">Export any table of this workspace as CSV. Your data stays in your own Supabase project.</p>
       <div className="mt-3 flex flex-wrap gap-2">
         {EXPORTS.map(([t, label]) => (
           <Button key={t} asChild size="sm"><a href={`/api/export?table=${t}`} download><Download /> {label}</a></Button>
         ))}
       </div>
-      <div className="mt-6 max-w-xl rounded-md border border-danger/30 p-4">
-        <h3 className="text-13 font-semibold">Delete account data</h3>
-        <p className="mt-1 text-13 text-muted-foreground">Removes every company, contact, deal, signal and spend record you own. Your sign-in stays. This cannot be undone.{demo ? " In demo mode the seed data returns when the server restarts." : ""}</p>
-        <Button variant="danger" size="sm" className="mt-3" onClick={() => setOpen(true)}>Delete all my data</Button>
-      </div>
+      {owner && (
+        <div className="mt-6 max-w-xl rounded-md border border-danger/30 p-4">
+          <h3 className="text-13 font-semibold">Delete workspace data</h3>
+          <p className="mt-1 text-13 text-muted-foreground">Removes every company, contact, deal, signal and spend record in this workspace, for everyone in it. The sign-ins and the team stay. This cannot be undone.{demo ? " In demo mode the seed data returns when the server restarts." : ""}</p>
+          <Button variant="danger" size="sm" className="mt-3" onClick={() => setOpen(true)}>Delete all workspace data</Button>
+        </div>
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-sm" role="alertdialog">
           <DialogHeader>
-            <DialogTitle>Delete all your data?</DialogTitle>
+            <DialogTitle>Delete all workspace data?</DialogTitle>
             <DialogDescription>Export first if you need a copy. This cannot be undone.</DialogDescription>
           </DialogHeader>
           <DialogBody>

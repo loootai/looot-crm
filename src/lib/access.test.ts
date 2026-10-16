@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessFor, safeNext } from "./access";
+import { accessFor, emailAllowed, safeNext } from "./access";
 
 const u = (email: string, confirmed = true) => ({ email, email_confirmed_at: confirmed ? "2026-10-01T00:00:00Z" : null });
 
@@ -36,5 +36,15 @@ describe("safeNext", () => {
   });
   it.each(["//evil.example", "/\\evil.example", "https://evil.example", "javascript:alert(1)", "evil.example", "/\n//evil.example", "", null, undefined])("rejects %s", (v) => {
     expect(safeNext(v as string | null)).toBe("/");
+  });
+});
+
+describe("emailAllowed", () => {
+  it("tells whether an invited email could sign in", () => {
+    const env = { LOOOT_CRM_ALLOWED_EMAILS: "one@acme.example", LOOOT_CRM_ALLOWED_DOMAINS: "team.example" };
+    expect(emailAllowed("ONE@acme.example", env)).toBe(true);
+    expect(emailAllowed("anyone@team.example", env)).toBe(true);
+    expect(emailAllowed("two@acme.example", env)).toBe(false);
+    expect(emailAllowed("one@acme.example", {})).toBe(false);
   });
 });
