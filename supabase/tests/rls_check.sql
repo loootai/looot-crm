@@ -88,6 +88,99 @@ begin
   end loop;
 end $$;
 
+-- Teams. User 1 owns a workspace and invites user 3, whose own workspace is still empty.
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$ begin
+  if (select public.invite_member('User3@Three.example') ->> 'ok')::boolean then raise notice 'owner invited a member'; end if;
+  if (select public.invite_member('user3@three.example') ->> 'reason') = 'already' then raise notice 'second invite says already'; end if;
+  if (select public.invite_member('not an email') ->> 'reason') = 'invalid' then raise notice 'invalid invite refused'; end if;
+  if (select public.invite_member('pending@one.example') ->> 'ok')::boolean then raise notice 'owner invited an email that has not signed up'; end if;
+end $$;
+
+-- User 2 has data in their own workspace now, so user 1 cannot pull them in.
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+insert into companies (name, domain) values ('Other Co', 'other.example');
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$ begin
+  if (select public.invite_member('user2@two.example') ->> 'reason') = 'has_workspace' then raise notice 'member of a workspace with data refused'; end if;
+end $$;
+
+-- User 3 signs in: the invitation is claimed and user 3 works on user 1's rows.
+set request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+do $$
+declare
+  t text;
+  n bigint;
+  j jsonb := public.join_workspace();
+begin
+  if j ->> 'role' = 'member' then raise notice 'member joined'; end if;
+  foreach t in array array['companies','contacts','deals','deal_contacts','activities','actions','runs','signals','signal_baselines','score_history','settings','budget_reservations'] loop
+    execute format('select count(*) from public.%I', t) into n;
+    raise notice 'member sees % rows in %', n, t;
+  end loop;
+  select count(*) into n from public.workspace_members;
+  raise notice 'member sees % members', n;
+end $$;
+insert into contacts (company_id, first_name) values ('aaaaaaaa-0000-0000-0000-000000000001', 'Added by member');
+update companies set description = 'edited by member' where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+do $$ begin
+  if (select count(*) from contacts where first_name = 'Added by member' and owner_id = '33333333-3333-3333-3333-333333333333') = 1 then raise notice 'member added a contact to a shared company'; end if;
+end $$;
+do $$ begin
+  update settings set daily_budget_usd = 999;
+  raise exception 'MEMBER CHANGED THE BUDGET';
+exception when insufficient_privilege then raise notice 'member budget change refused';
+end $$;
+do $$ begin
+  perform public.invite_member('someone@one.example');
+  raise exception 'MEMBER INVITED';
+exception when insufficient_privilege then raise notice 'member invite refused';
+end $$;
+do $$ begin
+  insert into workspace_members (workspace_id, email) values (public.current_workspace(), 'sneak@one.example');
+  raise exception 'DIRECT MEMBER INSERT SUCCEEDED';
+exception when insufficient_privilege then raise notice 'direct member insert refused';
+end $$;
+reset role;
+select set_config('test.ws2', (select id::text from public.workspaces where created_by = '22222222-2222-2222-2222-222222222222'), false) is not null as ws2_found \gset
+set role authenticated;
+set request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+do $$ begin
+  insert into companies (workspace_id, name, domain) values (current_setting('test.ws2')::uuid, 'Spoof', 'spoof2.example');
+  raise exception 'FORGED WORKSPACE INSERT SUCCEEDED';
+exception when insufficient_privilege then raise notice 'forged workspace refused';
+end $$;
+
+-- Outsiders still see nothing of the team, including what the member added.
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+do $$ begin
+  if (select count(*) from contacts) = 0 and (select count(*) from workspace_members) = 1 then raise notice 'outsider sees no team rows'; end if;
+end $$;
+
+-- An unconfirmed email cannot claim an invitation.
+reset role;
+insert into auth.users values ('44444444-4444-4444-4444-444444444444', 'pending@one.example', null);
+set role authenticated;
+set request.jwt.claim.sub = '44444444-4444-4444-4444-444444444444';
+do $$ begin
+  perform public.join_workspace();
+  raise exception 'UNCONFIRMED JOIN SUCCEEDED';
+exception when insufficient_privilege then raise notice 'unconfirmed join refused';
+end $$;
+
+-- The owner removes user 3. The contact user 3 added stays with the team. User 3 starts over alone.
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$ begin
+  if (select public.remove_member('user1@one.example') ->> 'reason') = 'self' then raise notice 'owner cannot remove themselves'; end if;
+  if (select public.remove_member('user3@three.example') ->> 'ok')::boolean then raise notice 'owner removed a member'; end if;
+  if (select count(*) from contacts where first_name = 'Added by member') = 1 then raise notice 'removed member rows stay'; end if;
+end $$;
+set request.jwt.claim.sub = '33333333-3333-3333-3333-333333333333';
+do $$ begin
+  if (select count(*) from companies) = 0 then raise notice 'removed member sees nothing'; end if;
+  if (select public.join_workspace() ->> 'role') = 'owner' and (select count(*) from companies) = 0 then raise notice 'removed member starts a new workspace'; end if;
+end $$;
+
 -- anon reads nothing.
 reset role;
 set role anon;
@@ -95,6 +188,11 @@ do $$ begin
   perform count(*) from public.companies;
   raise exception 'ANON READ SUCCEEDED';
 exception when insufficient_privilege then raise notice 'anon refused';
+end $$;
+do $$ begin
+  perform public.join_workspace();
+  raise exception 'ANON JOIN SUCCEEDED';
+exception when insufficient_privilege then raise notice 'anon join refused';
 end $$;
 reset role;
 select 'tables without rls|' || count(*) from pg_tables where schemaname = 'public' and not rowsecurity;

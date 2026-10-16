@@ -3,6 +3,7 @@ import { actionNames, PUBLIC_ROUTES, routeMap } from "./routeMap";
 
 type FakeUser = { id: string; email: string; email_confirmed_at: string } | null;
 let user: FakeUser = null;
+let joined = false;
 const DB_TOUCHED = "db touched";
 
 vi.mock("next/headers", () => ({ cookies: async () => ({ getAll: () => [], set: () => {} }) }));
@@ -12,6 +13,12 @@ vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
     auth: { getUser: async () => ({ data: { user } }), signOut: async () => ({}), exchangeCodeForSession: async () => ({ error: null }) },
     from: () => { throw new Error("db touched"); },
+    rpc: async (fn: string) => {
+      // Joining the workspace is the first database call of an allowed user. Anything else counts as touching data.
+      if (fn !== "join_workspace") throw new Error("db touched");
+      joined = true;
+      return { data: { workspace_id: "w1", role: "owner", name: "Workspace" }, error: null };
+    },
   }),
 }));
 
@@ -42,6 +49,7 @@ beforeEach(() => {
   vi.stubEnv("SPEND_RATE_LIMIT_PER_MIN", "1000");
   vi.resetModules();
   user = null;
+  joined = false;
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -61,6 +69,7 @@ describe.each(routes.flatMap((r) => r.methods.map((m) => ({ ...r, method: m })))
     user = signedIn("stranger@evil.example");
     const r = await call(file, method);
     expect(r.touchedDb).toBe(false);
+    expect(joined).toBe(false);
     expect(r.status).toBe(403);
   });
   it("is closed to everyone when no allow-list is set", async () => {
