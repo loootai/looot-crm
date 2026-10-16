@@ -2,6 +2,7 @@ import { emptyData, type DemoData } from "@/lib/store/demoStore";
 import { ROW_DEFAULTS } from "@/lib/store/types";
 import { basePoints, DEFAULT_WEIGHTS, scoreCompany } from "@/lib/score";
 import { FALLBACK_PRICES, JOBS, type JobId, round6 } from "@/lib/jobs";
+import { PIPELINE_TEMPLATES, templateStages } from "@/lib/pipelines";
 import type { ActionKind, ActionStatus, ActivityKind, EmailStatus, RunOutcome, SignalKind, Stage, TableName, Tables } from "@/lib/types";
 
 /**
@@ -95,6 +96,13 @@ const DEALS: [string, string, string, Stage, number, number, string | null, numb
   ["d-kestrel-2", "kestrel", "Kestrel: renewal, year 2", "won", 31000, -40, null, null, "Renewed at list price"],
   ["d-dunmore", "dunmore", "Dunmore: transload yards", "lost", 110000, -33, null, null, "Chose incumbent"],
   ["d-ostrava-2", "ostrava", "Ostrava: Baltimore pilot", "lost", 15000, -58, null, null, "Timing"],
+];
+
+// A second board: partners, no deal value. id, company, name, stage, next step, due in days, closed reason
+const PARTNERSHIPS: [string, string, string, string, string | null, number | null, string | null][] = [
+  ["d-northgate-partner", "northgate", "Northgate: carrier portal integration", "in_talks", "Share the appointment API docs with Camille", 3, null],
+  ["d-ardent-partner", "ardent", "Ardent: joint case study", "intro_made", "Draft the case study outline", 6, null],
+  ["d-marrow-partner", "marrow", "Marrow Creek: reference customer", "agreed", null, null, "Two reference calls a quarter"],
 ];
 
 // company, kind, days ago, title, tag, detail
@@ -392,11 +400,19 @@ export function seedDemo(now: Date = new Date()): DemoData {
     });
   });
 
+  // Two pipelines: Sales with the 0.1.x stages, and Partnerships without amounts.
+  const boards: [string, (typeof PIPELINE_TEMPLATES)[number]][] = [["pl-sales", PIPELINE_TEMPLATES[0]], ["pl-partners", PIPELINE_TEMPLATES[1]]];
+  boards.forEach(([id, t], i) => {
+    row("pipelines", { id, name: t.name, position: (i + 1) * 1000, subject: t.subject, track_amount: t.trackAmount, currency: "USD", created_at: ago(120) });
+    templateStages(t).forEach((st, k) => row("pipeline_stages", { id: `${id}-${st.key}`, pipeline_id: id, key: st.key, label: st.label, kind: st.kind, position: (k + 1) * 1000, created_at: ago(120) }));
+  });
+
   const perStage: Record<string, number> = {};
   DEALS.forEach(([id, slug, name, stage, amount, closeIn, nextStep, dueIn, reason], i) => {
     perStage[stage] = (perStage[stage] ?? 0) + 1;
     row("deals", {
       id,
+      pipeline_id: "pl-sales",
       company_id: cid(slug),
       name,
       stage,
@@ -411,6 +427,21 @@ export function seedDemo(now: Date = new Date()): DemoData {
     });
     const people = d.contacts.filter((c) => c.company_id === cid(slug)).slice(0, 2);
     people.forEach((p, k) => row("deal_contacts", { id: `dc-${id}-${k}`, deal_id: id, contact_id: p.id, role: k === 0 ? "champion" : "buyer" }));
+  });
+  PARTNERSHIPS.forEach(([id, slug, name, stage, nextStep, dueIn, reason], i) => {
+    row("deals", {
+      id,
+      pipeline_id: "pl-partners",
+      company_id: cid(slug),
+      name,
+      stage,
+      next_step: nextStep,
+      next_step_due: dueIn === null ? null : dateIn(dueIn),
+      position: (i + 1) * 1000,
+      closed_reason: reason,
+      stage_changed_at: ago(5 + i * 4),
+      created_at: ago(40 + i * 5),
+    });
   });
 
   // 13 companies x (note, call, meeting, stage change) = 52 activities.

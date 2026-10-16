@@ -3,15 +3,16 @@ import { bad, sessionOr401 } from "@/lib/api";
 import { toCsv } from "@/lib/csv";
 import { TABLE_NAMES, type TableName } from "@/lib/types";
 
-/** Downloads one table as CSV. Only the signed-in user's rows. */
+/** Downloads one table as CSV. Only the rows of the signed-in user's workspace. */
 export async function GET(request: Request) {
   const session = await sessionOr401();
   if (session instanceof NextResponse) return session;
   const table = new URL(request.url).searchParams.get("table") as TableName | null;
   if (!table || !TABLE_NAMES.includes(table)) return bad("Unknown table.");
   const rows = (await session.store.all(table)).map((r) => {
-    const { owner_id: _owner, ...rest } = r as unknown as Record<string, unknown>;
+    const { owner_id: _owner, workspace_id: _workspace, ...rest } = r as unknown as Record<string, unknown>;
     void _owner;
+    void _workspace;
     return rest;
   });
   return new NextResponse(toCsv(rows), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${table}.csv"`, "Cache-Control": "no-store" } });

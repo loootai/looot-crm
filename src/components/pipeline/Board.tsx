@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { closestCorners, DndContext, DragOverlay, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors, type Announcements, type CollisionDetection, type DragEndEvent, type KeyboardCoordinateGetter } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { AlertTriangle, CalendarDays, ChevronsLeftRight, Ellipsis, KanbanSquare, Plus, Rows3 } from "lucide-react";
+import { AlertTriangle, CalendarDays, ChevronsLeftRight, Ellipsis, KanbanSquare, Plus, Rows3, Settings2 } from "lucide-react";
 import { moveDeal } from "@/app/actions";
 import { EmptyState, Monogram, ScoreChip } from "@/components/common";
 import { useHotkeys } from "@/components/shell/hotkeys";
@@ -16,8 +16,9 @@ import { Select } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/popover";
 import { Table, Td, Th } from "@/components/ui/table";
 import { dueLabel, money, moneyShort, shortDate } from "@/lib/format";
+import { isClosed, type PipelineView } from "@/lib/pipelines";
 import type { DealCard } from "@/lib/queries";
-import { STAGE_LABEL, STAGES, type Stage } from "@/lib/types";
+import type { Stage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CloseDealDialog, DealSheet, NewDealDialog } from "./DealView";
 
@@ -29,7 +30,7 @@ const boardKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
   if (event.code !== "ArrowLeft" && event.code !== "ArrowRight") return sortableKeyboardCoordinates(event, args);
   const { collisionRect, droppableRects } = args.context;
   if (!collisionRect) return undefined;
-  const columns = STAGES.map((s) => droppableRects.get(`col:${s}`)).filter((r): r is NonNullable<typeof r> => !!r).sort((a, b) => a.left - b.left);
+  const columns = [...droppableRects.entries()].filter(([id]) => String(id).startsWith("col:")).map(([, r]) => r).sort((a, b) => a.left - b.left);
   const center = collisionRect.left + collisionRect.width / 2;
   const here = columns.findIndex((r) => center >= r.left && center <= r.right);
   const from = here === -1 ? columns.findIndex((r) => r.left > center) - (event.code === "ArrowRight" ? 1 : 0) : here;
@@ -42,7 +43,7 @@ const boardKeyboardCoordinates: KeyboardCoordinateGetter = (event, args) => {
 
 const MONTH = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
 
-export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; companies: { id: string; name: string }[] }) {
+export function Board({ pipeline, pipelines, deals: serverDeals, companies, people }: { pipeline: PipelineView; pipelines: { id: string; name: string }[]; deals: DealCard[]; companies: { id: string; name: string }[]; people: { id: string; name: string }[] }) {
   const router = useRouter();
   const path = usePathname();
   const sp = useSearchParams();
@@ -58,12 +59,17 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
   const [view, setView] = React.useState<"board" | "table">("board");
   const [month, setMonth] = React.useState("");
   const [hot, setHot] = React.useState(false);
+  const stages = pipeline.stages;
+  const labelOf = (key: Stage) => stages.find((s) => s.key === key)?.label ?? key;
+  const kindOf = (key: Stage) => stages.find((s) => s.key === key)?.kind;
+  const firstOpen = stages.find((s) => s.kind === "open")?.key ?? stages[0]?.key;
+  const fmt = (cents: number) => money(cents, pipeline.currency);
   const [expanded, setExpanded] = React.useState<Set<Stage>>(new Set());
-  const [mobileStage, setMobileStage] = React.useState<Stage>("lead");
+  const [mobileStage, setMobileStage] = React.useState<Stage>(firstOpen ?? "");
   const [dragging, setDragging] = React.useState<string | null>(null);
   const [addingLocal, setAdding] = React.useState(false);
   const adding = addingLocal || sp.get("new") === "1";
-  const [closing, setClosing] = React.useState<{ deal: DealCard; stage: "won" | "lost" } | null>(null);
+  const [closing, setClosing] = React.useState<{ deal: DealCard; stage: Stage; kind: "won" | "lost"; label: string } | null>(null);
   const openId = sp.get("deal");
   const now = React.useMemo(() => new Date(), []);
 
@@ -82,7 +88,8 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
 
   /** Optimistic move. Rolls back with a toast when the server refuses. */
   const commit = (deal: DealCard, stage: Stage, index?: number) => {
-    if (stage !== deal.stage && (stage === "won" || stage === "lost")) return setClosing({ deal, stage });
+    const kind = kindOf(stage);
+    if (stage !== deal.stage && (kind === "won" || kind === "lost")) return setClosing({ deal, stage, kind, label: labelOf(stage) });
     const before = deals;
     const column = deals.filter((d) => d.stage === stage && d.id !== deal.id).sort((a, b) => a.position - b.position);
     const i = index === undefined ? column.length : Math.max(0, Math.min(column.length, index));
@@ -96,7 +103,7 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
         setDeals(before);
         toast.error(`${deal.name} was not moved. ${res.error}`);
       } else {
-        if (stage !== deal.stage) toast(`${deal.name} moved to ${STAGE_LABEL[stage]}`);
+        if (stage !== deal.stage) toast(`${deal.name} moved to ${labelOf(stage)}`);
         router.refresh();
       }
     });
@@ -141,7 +148,7 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
     if (id === undefined) return null;
     const key = String(id);
     const stage = key.startsWith("col:") ? (key.slice(4) as Stage) : deals.find((d) => d.id === key)?.stage;
-    return stage ? STAGE_LABEL[stage] : null;
+    return stage ? labelOf(stage) : null;
   };
   const announcements: Announcements = {
     onDragStart: ({ active }) => `Picked up ${nameOf(active.id)}. Arrow left and right change the stage, up and down the order. Space drops it, Escape cancels.`,
@@ -154,16 +161,25 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
   const active = dragging ? deals.find((d) => d.id === dragging) : null;
   const overlays = (
     <>
-      <NewDealDialog open={adding} onOpenChange={(o) => { setAdding(o); if (!o && sp.get("new")) setParam("new", null); }} companies={companies} />
-      {closing && <CloseDealDialog deal={closing.deal} stage={closing.stage} onClose={() => setClosing(null)} />}
+      <NewDealDialog open={adding} onOpenChange={(o) => { setAdding(o); if (!o && sp.get("new")) setParam("new", null); }} pipelines={[pipeline]} companies={companies} people={people} />
+      {closing && <CloseDealDialog deal={closing.deal} stage={closing.stage} kind={closing.kind} label={closing.label} onClose={() => setClosing(null)} />}
       {openId && <DealSheet dealId={openId} onClose={() => openDeal(null)} version={version} />}
     </>
   );
-  const cardProps = { now, onOpen: openDeal, onMove: commit };
+  const cardProps = { now, onOpen: openDeal, onMove: commit, pipeline };
+  const subjectLabel = pipeline.subject === "person" ? "Person" : "Company";
 
   return (
     <>
       <div className="flex flex-wrap items-center gap-2 px-4 sm:px-6">
+        {pipelines.length > 1 ? (
+          <Select aria-label="Pipeline" value={pipeline.id} onChange={(e) => router.replace(`${path}?p=${e.target.value}`, { scroll: false })} className="h-7 w-auto text-xs font-semibold max-sm:h-9">
+            {pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </Select>
+        ) : (
+          <span className="text-13 font-semibold">{pipeline.name}</span>
+        )}
+        <Button asChild variant="ghost" size="iconSm" aria-label="Edit pipelines and stages" title="Edit pipelines and stages"><Link href="/settings#pipelines"><Settings2 /></Link></Button>
         <div role="radiogroup" aria-label="View" className="flex rounded-md border border-border-strong bg-surface p-0.5 max-md:hidden">
           {([["board", "Board", KanbanSquare], ["table", "Table", Rows3]] as const).map(([id, label, Icon]) => (
             <button key={id} role="radio" aria-checked={view === id} onClick={() => setView(id)} className={cn("flex h-7 items-center gap-1.5 rounded-sm px-2 text-xs font-medium transition-colors duration-100", view === id ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground")}>
@@ -184,18 +200,18 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
       {view === "table" ? (
         <div className="scroll-thin mx-4 mt-3 relative overflow-x-auto rounded-md border border-border bg-surface max-md:hidden sm:mx-6">
           <Table className="min-w-[900px]">
-            <thead><tr><Th>Deal</Th><Th>Company</Th><Th>Stage</Th><Th className="text-right">Value</Th><Th>Score</Th><Th>Next step</Th><Th>Close</Th></tr></thead>
+            <thead><tr><Th>Deal</Th><Th>{subjectLabel}</Th><Th>Stage</Th>{pipeline.trackAmount && <Th className="text-right">Value</Th>}<Th>Score</Th><Th>Next step</Th><Th>Close</Th></tr></thead>
             <tbody>
-              {visible.sort((a, b) => STAGES.indexOf(a.stage) - STAGES.indexOf(b.stage) || a.position - b.position).map((d) => {
+              {visible.sort((a, b) => stages.findIndex((s) => s.key === a.stage) - stages.findIndex((s) => s.key === b.stage) || a.position - b.position).map((d) => {
                 const due = d.nextStepDue ? dueLabel(d.nextStepDue, now) : null;
                 return (
                   <tr key={d.id} className="cursor-pointer hover:bg-muted" onClick={(e) => !(e.target as HTMLElement).closest("a,button") && openDeal(d.id)}>
                     <Td><button onClick={() => openDeal(d.id)} className="max-w-72 truncate rounded-sm text-left font-medium">{d.name}</button></Td>
-                    <Td><Link href={`/companies/${d.companyId}`} className="inline-flex max-w-48 items-center gap-1.5 hover:underline"><Monogram name={d.companyName} seed={d.companyDomain} size={20} /><span className="truncate">{d.companyName}</span></Link></Td>
-                    <Td>{STAGE_LABEL[d.stage]}</Td>
-                    <Td className="tnum text-right font-mono text-xs">{money(d.amountCents)}</Td>
+                    <Td><Link href={d.subjectHref} className="inline-flex max-w-48 items-center gap-1.5 hover:underline"><Monogram name={d.subjectName} seed={d.subjectSeed} size={20} /><span className="truncate">{d.subjectName}</span></Link></Td>
+                    <Td>{labelOf(d.stage)}</Td>
+                    {pipeline.trackAmount && <Td className="tnum text-right font-mono text-xs">{fmt(d.amountCents)}</Td>}
                     <Td><ScoreChip score={d.score} /></Td>
-                    <Td className="max-w-72">{d.nextStep ? <span className="flex gap-2"><span className="truncate">{d.nextStep}</span>{due && <span className={cn("whitespace-nowrap text-xs", due.overdue ? "font-medium text-warning" : "text-muted-foreground")}>{due.text}</span>}</span> : d.stage === "won" || d.stage === "lost" ? "" : <span className="font-medium text-warning">No next step</span>}</Td>
+                    <Td className="max-w-72">{d.nextStep ? <span className="flex gap-2"><span className="truncate">{d.nextStep}</span>{due && <span className={cn("whitespace-nowrap text-xs", due.overdue ? "font-medium text-warning" : "text-muted-foreground")}>{due.text}</span>}</span> : isClosed(kindOf(d.stage)) ? "" : <span className="font-medium text-warning">No next step</span>}</Td>
                     <Td className="whitespace-nowrap text-muted-foreground">{shortDate(d.closeDate)}</Td>
                   </tr>
                 );
@@ -208,29 +224,29 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
       {/* Board, 768 px and up */}
       <DndContext id="pipeline" sensors={sensors} accessibility={{ announcements, screenReaderInstructions: { draggable: "Press Space to pick up this deal. Arrow left and right change the stage, up and down the order. Space drops it, Escape cancels." } }} collisionDetection={collision} onDragStart={(e) => setDragging(String(e.active.id))} onDragCancel={() => setDragging(null)} onDragEnd={onDragEnd}>
         <div className={cn("scroll-thin mt-3 flex-1 gap-3 relative overflow-x-auto px-4 pb-4 sm:px-6", view === "board" ? "hidden md:flex" : "hidden")}>
-          {STAGES.map((s) => {
-            const closed = s === "won" || s === "lost";
+          {stages.map(({ key: s, kind }) => {
+            const closed = isClosed(kind);
             const list = byStage(s);
-            return <Column key={s} stage={s} deals={list} collapsed={closed && !expanded.has(s)} onToggle={closed ? () => setExpanded((x) => { const n = new Set(x); if (n.has(s)) n.delete(s); else n.add(s); return n; }) : undefined} firstEmpty={s === "lead" && deals.length === 0} onNew={() => setAdding(true)} {...cardProps} />;
+            return <Column key={s} stage={s} deals={list} collapsed={closed && !expanded.has(s)} onToggle={closed ? () => setExpanded((x) => { const n = new Set(x); if (n.has(s)) n.delete(s); else n.add(s); return n; }) : undefined} firstEmpty={s === firstOpen && deals.length === 0} onNew={() => setAdding(true)} {...cardProps} />;
           })}
         </div>
-        <DragOverlay dropAnimation={null}>{active ? <CardBody deal={active} now={now} lifted /> : null}</DragOverlay>
+        <DragOverlay dropAnimation={null}>{active ? <CardBody deal={active} now={now} pipeline={pipeline} lifted /> : null}</DragOverlay>
       </DndContext>
 
       {/* One stage at a time under 768 px. "Move to" replaces dragging. */}
       <div className="mt-3 px-4 md:hidden">
         <div role="tablist" aria-label="Stage" className="scroll-thin -mx-4 flex gap-1.5 relative overflow-x-auto px-4 pb-2">
-          {STAGES.map((s) => (
+          {stages.map(({ key: s, label }) => (
             <button key={s} role="tab" aria-selected={mobileStage === s} onClick={() => setMobileStage(s)} className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-sm border px-3 text-13 font-medium", mobileStage === s ? "border-primary bg-primary text-primary-foreground" : "border-border-strong bg-surface text-muted-foreground")}>
-              {STAGE_LABEL[s]} <span className="tnum font-mono text-xs opacity-80">{byStage(s).length}</span>
+              {label} <span className="tnum font-mono text-xs opacity-80">{byStage(s).length}</span>
             </button>
           ))}
         </div>
-        <p className="tnum py-1 text-xs text-muted-foreground">{byStage(mobileStage).length} deals, {money(byStage(mobileStage).reduce((t, d) => t + d.amountCents, 0))}</p>
+        <p className="tnum py-1 text-xs text-muted-foreground">{byStage(mobileStage).length} deals{pipeline.trackAmount && `, ${fmt(byStage(mobileStage).reduce((t, d) => t + d.amountCents, 0))}`}</p>
         <ul className="grid gap-2 pb-4">
           {byStage(mobileStage).map((d) => <li key={d.id}><CardBody deal={d} {...cardProps} /></li>)}
           {byStage(mobileStage).length === 0 && (
-            <li>{deals.length === 0 && mobileStage === "lead" ? <EmptyState title="Create your first deal" actions={<Button variant="primary" onClick={() => setAdding(true)}><Plus /> New deal</Button>} className="py-4">A deal belongs to a company and moves across six stages.</EmptyState> : <p className="py-6 text-13 text-muted-foreground">No deal in {STAGE_LABEL[mobileStage]}.</p>}</li>
+            <li>{deals.length === 0 && mobileStage === firstOpen ? <EmptyState title="Create your first deal" actions={<Button variant="primary" onClick={() => setAdding(true)}><Plus /> New deal</Button>} className="py-4">{emptyHint(pipeline)}</EmptyState> : <p className="py-6 text-13 text-muted-foreground">No deal in {labelOf(mobileStage)}.</p>}</li>
           )}
         </ul>
       </div>
@@ -239,33 +255,38 @@ export function Board({ deals: serverDeals, companies }: { deals: DealCard[]; co
   );
 }
 
+const emptyHint = (p: PipelineView) => `A deal belongs to ${p.subject === "person" ? "a person" : "a company"} and moves across the ${p.stages.length} stages of ${p.name}.`;
+
 interface CardCommon {
   now: Date;
   onOpen: (id: string) => void;
   onMove: (deal: DealCard, stage: Stage) => void;
+  pipeline: PipelineView;
 }
 
 function Column({ stage, deals, collapsed, onToggle, firstEmpty, onNew, ...card }: { stage: Stage; deals: DealCard[]; collapsed: boolean; onToggle?: () => void; firstEmpty: boolean; onNew: () => void } & CardCommon) {
   const { setNodeRef, isOver } = useDroppable({ id: `col:${stage}` });
   const total = deals.reduce((t, d) => t + d.amountCents, 0);
+  const { pipeline } = card;
+  const label = pipeline.stages.find((s) => s.key === stage)?.label ?? stage;
   if (collapsed) {
     return (
-      <section ref={setNodeRef} aria-label={`${STAGE_LABEL[stage]}, ${deals.length} deals, collapsed`} className={cn("flex w-[104px] shrink-0 flex-col rounded-md border border-dashed border-border-strong transition-colors duration-100", isOver ? "border-primary bg-positive-bg" : "bg-muted/40")}>
+      <section ref={setNodeRef} aria-label={`${label}, ${deals.length} deals, collapsed`} className={cn("flex w-[104px] shrink-0 flex-col rounded-md border border-dashed border-border-strong transition-colors duration-100", isOver ? "border-primary bg-positive-bg" : "bg-muted/40")}>
         <button onClick={onToggle} aria-expanded={false} className="flex h-full min-h-40 w-full flex-col items-start gap-1 rounded-md p-3 text-left hover:bg-muted">
-          <span className="flex w-full items-center justify-between text-13 font-semibold">{STAGE_LABEL[stage]} <ChevronsLeftRight className="size-3.5 text-muted-foreground" aria-hidden /></span>
-          <span className="tnum text-xs text-muted-foreground">{deals.length} deals</span>
-          <span className="tnum font-mono text-xs text-muted-foreground">{moneyShort(total)}</span>
+          <span className="flex w-full items-center justify-between text-13 font-semibold">{label} <ChevronsLeftRight className="size-3.5 text-muted-foreground" aria-hidden /></span>
+          <span className="tnum text-xs text-muted-foreground">{deals.length} {deals.length === 1 ? "deal" : "deals"}</span>
+          {pipeline.trackAmount && <span className="tnum font-mono text-xs text-muted-foreground">{moneyShort(total, pipeline.currency)}</span>}
         </button>
       </section>
     );
   }
   return (
-    <section aria-label={`${STAGE_LABEL[stage]}, ${deals.length} deals`} className="flex min-w-[220px] max-w-[320px] flex-1 flex-col">
+    <section aria-label={`${label}, ${deals.length} deals`} className="flex min-w-[220px] max-w-[320px] flex-1 flex-col">
       <header className="flex h-9 items-center gap-2 px-1">
-        <h2 className="text-13 font-semibold">{STAGE_LABEL[stage]}</h2>
+        <h2 className="text-13 font-semibold">{label}</h2>
         <span className="tnum rounded-sm bg-muted px-1.5 font-mono text-xs text-muted-foreground">{deals.length}</span>
-        <span className="tnum ml-auto font-mono text-xs text-muted-foreground">{money(total)}</span>
-        {onToggle && <Button size="iconSm" variant="ghost" onClick={onToggle} aria-label={`Collapse ${STAGE_LABEL[stage]}`} aria-expanded><ChevronsLeftRight /></Button>}
+        {pipeline.trackAmount && <span className="tnum ml-auto font-mono text-xs text-muted-foreground">{money(total, pipeline.currency)}</span>}
+        {onToggle && <Button size="iconSm" variant="ghost" onClick={onToggle} aria-label={`Collapse ${label}`} aria-expanded><ChevronsLeftRight /></Button>}
       </header>
       <div ref={setNodeRef} className={cn("flex min-h-40 flex-1 flex-col gap-2 rounded-md p-1.5 transition-colors duration-100", isOver ? "bg-positive-bg" : "bg-muted/60")}>
         <SortableContext items={deals.map((d) => d.id)} strategy={verticalListSortingStrategy}>
@@ -274,7 +295,7 @@ function Column({ stage, deals, collapsed, onToggle, firstEmpty, onNew, ...card 
         {firstEmpty && (
           <div className="p-3">
             <p className="text-13 font-medium">Create your first deal</p>
-            <p className="mt-1 text-xs text-muted-foreground">A deal belongs to a company and moves across these six stages.</p>
+            <p className="mt-1 text-xs text-muted-foreground">{emptyHint(pipeline)}</p>
             <Button variant="primary" size="sm" onClick={onNew} className="mt-3"><Plus /> New deal</Button>
           </div>
         )}
@@ -292,9 +313,9 @@ function SortableCard({ deal, ...card }: { deal: DealCard } & CardCommon) {
   );
 }
 
-function CardBody({ deal, now, onOpen, onMove, lifted }: { deal: DealCard; now: Date; onOpen?: (id: string) => void; onMove?: (deal: DealCard, stage: Stage) => void; lifted?: boolean }) {
+function CardBody({ deal, now, onOpen, onMove, lifted, pipeline }: { deal: DealCard; now: Date; onOpen?: (id: string) => void; onMove?: (deal: DealCard, stage: Stage) => void; lifted?: boolean; pipeline: PipelineView }) {
   const due = deal.nextStepDue ? dueLabel(deal.nextStepDue, now) : null;
-  const closed = deal.stage === "won" || deal.stage === "lost";
+  const closed = isClosed(pipeline.stages.find((s) => s.key === deal.stage)?.kind);
   return (
     <article className={cn("rounded-md border border-border bg-surface p-3 transition-colors duration-100 hover:border-border-strong", lifted && "w-[240px] scale-[1.02] cursor-grabbing shadow-overlay")}>
       <div className="flex items-start gap-1">
@@ -312,18 +333,18 @@ function CardBody({ deal, now, onOpen, onMove, lifted }: { deal: DealCard; now: 
               <DropdownMenuItem onSelect={() => onOpen?.(deal.id)}>Open deal</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Move to</DropdownMenuLabel>
-              {STAGES.filter((s) => s !== deal.stage).map((s) => <DropdownMenuItem key={s} onSelect={() => onMove(deal, s)}>{STAGE_LABEL[s]}</DropdownMenuItem>)}
+              {pipeline.stages.filter((s) => s.key !== deal.stage).map((s) => <DropdownMenuItem key={s.key} onSelect={() => onMove(deal, s.key)}>{s.label}</DropdownMenuItem>)}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
       </div>
       <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Monogram name={deal.companyName} seed={deal.companyDomain} size={20} />
-        <span className="truncate">{deal.companyName}</span>
-        <ScoreChip score={deal.score} className="ml-auto" />
+        <Monogram name={deal.subjectName} seed={deal.subjectSeed} size={20} />
+        <span className="truncate">{deal.subjectName}</span>
+        {deal.companyId && <ScoreChip score={deal.score} className="ml-auto" />}
       </div>
       <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-border pt-2">
-        <span className="tnum font-mono text-13 font-medium">{money(deal.amountCents)}</span>
+        {pipeline.trackAmount ? <span className="tnum font-mono text-13 font-medium">{money(deal.amountCents, pipeline.currency)}</span> : <span />}
         {deal.closeDate && <span className="tnum flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground"><CalendarDays className="size-3" aria-hidden /><span className="sr-only">Closes </span>{shortDate(deal.closeDate)}</span>}
       </div>
       {!closed && (

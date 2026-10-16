@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { TABLE_NAMES, type TableName, type Tables } from "../types";
+import { TABLE_NAMES, type TableName, type Tables, type TeamResult, type WorkspaceInfo, type WorkspaceMember } from "../types";
 import { dayStart, monthStart, overBudget, RESERVATION_HARD_SECONDS, RESERVATION_SOFT_SECONDS, windowOf, type BudgetStatus, type Reservation, type ReserveRequest, type ReserveResult } from "../budget";
 import { ROW_DEFAULTS, type Store } from "./types";
 
 export type DemoData = { [T in TableName]: Tables[T][] };
+
+/** The demo user's workspace. The demo user is its owner. */
+export const DEMO_WORKSPACE: WorkspaceInfo = { id: "demo", name: "Harborline", role: "owner" };
+const DEMO_OWNER = "ines@harborline.example";
+const EMAIL = /^[^@\s]+@[^@\s]+$/;
 
 export function emptyData(): DemoData {
   return Object.fromEntries(TABLE_NAMES.map((t) => [t, []])) as unknown as DemoData;
@@ -17,7 +22,19 @@ export function emptyData(): DemoData {
 export class MemoryStore implements Store {
   readonly demo = true;
   #res: Reservation[] = [];
-  constructor(readonly data: DemoData = emptyData()) {}
+  /** The workspace members. The signed-in demo user is the owner. */
+  team: WorkspaceMember[];
+  workspaceName = DEMO_WORKSPACE.name;
+  constructor(
+    readonly data: DemoData = emptyData(),
+    now: Date = new Date(),
+  ) {
+    const at = now.toISOString();
+    this.team = [
+      { email: DEMO_OWNER, role: "owner", joined_at: at, created_at: at },
+      { email: "tomas@harborline.example", role: "member", joined_at: at, created_at: at },
+    ];
+  }
 
   async all<T extends TableName>(table: T, where?: Partial<Tables[T]>): Promise<Tables[T][]> {
     const rows = this.data[table] as Tables[T][];
@@ -130,13 +147,37 @@ export class MemoryStore implements Store {
     return this.#res.filter((x) => x.state === "reserved" && x.expiresAt <= t).map((x) => ({ ...x }));
   }
 
+  async members(): Promise<WorkspaceMember[]> {
+    return this.team.map((m) => ({ ...m }));
+  }
+  async inviteMember(email: string): Promise<TeamResult> {
+    const e = email.trim().toLowerCase();
+    if (!EMAIL.test(e) || e.length > 254) return { ok: false, reason: "invalid" };
+    if (this.team.some((m) => m.email === e)) return { ok: false, reason: "already" };
+    this.team.push({ email: e, role: "member", joined_at: null, created_at: new Date().toISOString() });
+    return { ok: true };
+  }
+  async removeMember(email: string): Promise<TeamResult> {
+    const e = email.trim().toLowerCase();
+    if (e === DEMO_OWNER) return { ok: false, reason: "self" };
+    const before = this.team.length;
+    this.team = this.team.filter((m) => m.email !== e);
+    return this.team.length < before ? { ok: true } : { ok: false, reason: "not_found" };
+  }
+  async renameWorkspace(name: string): Promise<TeamResult> {
+    const clean = name.trim();
+    if (!clean || clean.length > 80) return { ok: false, reason: "invalid" };
+    this.workspaceName = clean;
+    return { ok: true };
+  }
+
   /** Mirrors the foreign keys of the migration: cascade or set null. */
   #cascade(table: TableName, ids: Set<string>) {
     const d = this.data;
     if (table === "companies") {
       const drop = <R extends { id: string; company_id: string | null }>(rows: R[]) => rows.filter((r) => !r.company_id || !ids.has(r.company_id));
       const contactIds = new Set(d.contacts.filter((c) => c.company_id && ids.has(c.company_id)).map((c) => c.id));
-      const dealIds = new Set(d.deals.filter((x) => ids.has(x.company_id)).map((x) => x.id));
+      const dealIds = new Set(d.deals.filter((x) => x.company_id && ids.has(x.company_id)).map((x) => x.id));
       d.contacts = drop(d.contacts);
       d.deals = drop(d.deals);
       d.activities = drop(d.activities);
@@ -146,13 +187,18 @@ export class MemoryStore implements Store {
       d.deal_contacts = d.deal_contacts.filter((x) => !dealIds.has(x.deal_id) && !contactIds.has(x.contact_id));
     }
     if (table === "contacts") {
-      d.deal_contacts = d.deal_contacts.filter((x) => !ids.has(x.contact_id));
+      // A deal about a person goes with the person.
+      const dealIds = new Set(d.deals.filter((x) => x.contact_id && ids.has(x.contact_id)).map((x) => x.id));
+      d.deals = d.deals.filter((x) => !dealIds.has(x.id));
+      d.deal_contacts = d.deal_contacts.filter((x) => !ids.has(x.contact_id) && !dealIds.has(x.deal_id));
+      for (const a of d.activities) if (a.deal_id && dealIds.has(a.deal_id)) a.deal_id = null;
       for (const a of d.activities) if (a.contact_id && ids.has(a.contact_id)) a.contact_id = null;
     }
     if (table === "deals") {
       d.deal_contacts = d.deal_contacts.filter((x) => !ids.has(x.deal_id));
       for (const a of d.activities) if (a.deal_id && ids.has(a.deal_id)) a.deal_id = null;
     }
+    if (table === "pipelines") d.pipeline_stages = d.pipeline_stages.filter((x) => !ids.has(x.pipeline_id));
     if (table === "actions") {
       d.runs = d.runs.filter((r) => !ids.has(r.action_id));
       this.#res = this.#res.filter((x) => !ids.has(x.actionId));

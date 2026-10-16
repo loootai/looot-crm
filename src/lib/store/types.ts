@@ -1,18 +1,18 @@
-import type { TableName, Tables } from "../types";
+import type { TableName, Tables, TeamResult, WorkspaceMember } from "../types";
 import { DEFAULT_WEIGHTS } from "../score";
 import type { BudgetStatus, Reservation, ReserveRequest, ReserveResult } from "../budget";
 
 /**
- * The one data interface the app uses. Two implementations: Supabase (row level security does the
- * owner filter) and an in-memory demo store. Pages and route handlers only see this interface.
+ * The one data interface the app uses. Two implementations: Supabase (row level security keeps every
+ * query inside the signed-in user's workspace) and an in-memory demo store. Pages and route handlers only see this interface.
  */
 export interface Store {
   readonly demo: boolean;
-  /** All rows of a table the signed-in user owns, optionally filtered by equal columns. */
+  /** All rows of a table in the signed-in user's workspace, optionally filtered by equal columns. */
   all<T extends TableName>(table: T, where?: Partial<Tables[T]>): Promise<Tables[T][]>;
   get<T extends TableName>(table: T, id: string): Promise<Tables[T] | null>;
   insert<T extends TableName>(table: T, rows: Partial<Tables[T]>[]): Promise<Tables[T][]>;
-  /** Inserts rows and skips the ones that hit the unique key made of `conflict` columns (plus the owner). */
+  /** Inserts rows and skips the ones that hit the unique key made of `conflict` columns (plus the workspace). */
   insertIgnore<T extends TableName>(table: T, rows: Partial<Tables[T]>[], conflict: (keyof Tables[T])[]): Promise<Tables[T][]>;
   update<T extends TableName>(table: T, id: string, patch: Partial<Tables[T]>): Promise<Tables[T] | null>;
   remove(table: TableName, ids: string[]): Promise<number>;
@@ -33,6 +33,15 @@ export interface Store {
   listExpiredReservations(at: Date): Promise<Reservation[]>;
   /** Used, held and left for today and this month. */
   budgetStatus(at: Date): Promise<BudgetStatus>;
+
+  /** Everyone in the workspace and the open invitations, owner first. */
+  members(): Promise<WorkspaceMember[]>;
+  /** Owner only. Invites an email. It joins when that email signs in, if it is also on the allow-list. */
+  inviteMember(email: string): Promise<TeamResult>;
+  /** Owner only. Removes a member or cancels an invitation. The rows they created stay. */
+  removeMember(email: string): Promise<TeamResult>;
+  /** Owner only. */
+  renameWorkspace(name: string): Promise<TeamResult>;
 }
 
 /** Column defaults, the same values the migration sets. The demo store applies them on insert. */
@@ -65,6 +74,8 @@ export const ROW_DEFAULTS: { [T in TableName]: Partial<Tables[T]> } = {
     source: "manual",
   },
   deals: {
+    company_id: null,
+    contact_id: null,
     stage: "lead",
     amount_cents: 0,
     currency: "USD",
@@ -82,5 +93,7 @@ export const ROW_DEFAULTS: { [T in TableName]: Partial<Tables[T]> } = {
   score_history: {},
   actions: { target_count: 1, target_label: null, estimate_usd: 0, actual_usd: 0, status: "running", finished_at: null },
   runs: { step: null, target_type: null, target_id: null, looot_run_id: null, status: null, outcome: null, cap_usd: null, cost_usd: 0, error: null, note: null },
+  pipelines: { position: 0, subject: "company", track_amount: true, currency: "USD" },
+  pipeline_stages: { position: 0, kind: "open" },
   settings: { role_keywords: [], default_pages: ["/pricing", "/careers"], weights: DEFAULT_WEIGHTS, action_ceiling_usd: null, daily_budget_usd: 5, monthly_budget_usd: 50 },
 };

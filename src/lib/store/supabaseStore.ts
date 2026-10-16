@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { TableName, Tables } from "../types";
+import type { TableName, Tables, TeamRefusal, TeamResult, WorkspaceMember } from "../types";
 import { dayStart, monthStart, RESERVATION_HARD_SECONDS, RESERVATION_SOFT_SECONDS, windowOf, type BudgetScope, type BudgetStatus, type Reservation, type ReserveRequest, type ReserveResult } from "../budget";
 import type { Store } from "./types";
 
@@ -16,6 +16,8 @@ const NUMERIC: Partial<Record<TableName, string[]>> = {
   runs: ["cap_usd", "cost_usd"],
   settings: ["action_ceiling_usd", "daily_budget_usd", "monthly_budget_usd"],
   deals: ["amount_cents", "position"],
+  pipelines: ["position"],
+  pipeline_stages: ["position"],
 };
 
 /** Postgres numeric and bigint columns arrive as strings. Turn them back into numbers. */
@@ -24,12 +26,22 @@ function fix<T extends TableName>(table: T, row: Record<string, unknown>): Table
   return row as unknown as Tables[T];
 }
 
-/** Store on Supabase. The client acts as the signed-in user, so row level security scopes every query to their rows. */
+const REFUSALS: TeamRefusal[] = ["invalid", "already", "has_workspace", "self", "not_found", "forbidden"];
+/** The answer of invite_member() or remove_member(). A refused permission (42501) means the caller is not the owner. */
+function teamResult(data: unknown, error: { code?: string; message: string } | null): TeamResult {
+  if (error?.code === "42501") return { ok: false, reason: "forbidden" };
+  if (error) throw new Error(error.message);
+  const r = data as { ok?: boolean; reason?: string } | null;
+  if (r?.ok) return { ok: true };
+  return { ok: false, reason: REFUSALS.includes(r?.reason as TeamRefusal) ? (r!.reason as TeamRefusal) : "not_found" };
+}
+
+/** Store on Supabase. The client acts as the signed-in user, so row level security scopes every query to their workspace. */
 export class SupabaseStore implements Store {
   readonly demo = false;
   constructor(
     private readonly db: SupabaseClient,
-    private readonly ownerId: string,
+    private readonly workspaceId: string,
   ) {}
 
   async all<T extends TableName>(table: T, where?: Partial<Tables[T]>): Promise<Tables[T][]> {
@@ -65,7 +77,7 @@ export class SupabaseStore implements Store {
     if (!rows.length) return [];
     const { data, error } = await this.db
       .from(table)
-      .upsert(rows as never[], { onConflict: ["owner_id", ...conflict.map(String)].join(","), ignoreDuplicates: true })
+      .upsert(rows as never[], { onConflict: ["workspace_id", ...conflict.map(String)].join(","), ignoreDuplicates: true })
       .select("*");
     if (error) throw new Error(error.message);
     return (data ?? []).map((r) => fix(table, r));
@@ -86,7 +98,7 @@ export class SupabaseStore implements Store {
 
   async reserveBudget(req: ReserveRequest): Promise<ReserveResult> {
     const { data, error } = await this.db.rpc("reserve_budget", {
-      p_owner: this.ownerId,
+      p_workspace: this.workspaceId,
       p_action: req.actionId,
       p_key: req.key,
       p_job: req.jobId,
@@ -106,17 +118,17 @@ export class SupabaseStore implements Store {
   }
 
   async settleReservation(key: string, at: Date): Promise<void> {
-    const { error } = await this.db.rpc("settle_reservation", { p_owner: this.ownerId, p_key: key, p_now: at.toISOString() });
+    const { error } = await this.db.rpc("settle_reservation", { p_workspace: this.workspaceId, p_key: key, p_now: at.toISOString() });
     if (error) throw new Error(`settle reservation: ${error.message}`);
   }
 
   async releaseReservation(key: string, at: Date): Promise<void> {
-    const { error } = await this.db.rpc("release_reservation", { p_owner: this.ownerId, p_key: key, p_now: at.toISOString() });
+    const { error } = await this.db.rpc("release_reservation", { p_workspace: this.workspaceId, p_key: key, p_now: at.toISOString() });
     if (error) throw new Error(`release reservation: ${error.message}`);
   }
 
   async holdReservation(key: string, loootRunId: string): Promise<void> {
-    const { error } = await this.db.rpc("hold_reservation", { p_owner: this.ownerId, p_key: key, p_looot_run_id: loootRunId });
+    const { error } = await this.db.rpc("hold_reservation", { p_workspace: this.workspaceId, p_key: key, p_looot_run_id: loootRunId });
     if (error) throw new Error(`hold reservation: ${error.message}`);
   }
 
@@ -137,8 +149,33 @@ export class SupabaseStore implements Store {
   }
 
   async budgetStatus(at: Date): Promise<BudgetStatus> {
-    const { data, error } = await this.db.rpc("budget_status", { p_owner: this.ownerId, p_day_start: dayStart(at).toISOString(), p_month_start: monthStart(at).toISOString() });
+    const { data, error } = await this.db.rpc("budget_status", { p_workspace: this.workspaceId, p_day_start: dayStart(at).toISOString(), p_month_start: monthStart(at).toISOString() });
     if (error) throw new Error(`budget status: ${error.message}`);
     return statusOf(data as { daily: Window; monthly: Window });
+  }
+
+  async members(): Promise<WorkspaceMember[]> {
+    const { data, error } = await this.db.from("workspace_members").select("email, role, joined_at, created_at");
+    if (error) throw new Error(error.message);
+    return ((data ?? []) as WorkspaceMember[]).sort((a, b) => (a.role === b.role ? a.email.localeCompare(b.email) : a.role === "owner" ? -1 : 1));
+  }
+
+  async inviteMember(email: string): Promise<TeamResult> {
+    const { data, error } = await this.db.rpc("invite_member", { p_email: email });
+    return teamResult(data, error);
+  }
+
+  async removeMember(email: string): Promise<TeamResult> {
+    const { data, error } = await this.db.rpc("remove_member", { p_email: email });
+    return teamResult(data, error);
+  }
+
+  async renameWorkspace(name: string): Promise<TeamResult> {
+    const clean = name.trim();
+    if (!clean || clean.length > 80) return { ok: false, reason: "invalid" };
+    // Row level security lets only the owner update the workspace, so a member changes zero rows.
+    const { data, error } = await this.db.from("workspaces").update({ name: clean }).eq("id", this.workspaceId).select("id");
+    if (error) throw new Error(error.message);
+    return data?.length ? { ok: true } : { ok: false, reason: "forbidden" };
   }
 }
