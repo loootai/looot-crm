@@ -183,7 +183,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
         </div>
         <div className="scroll-thin -mx-4 flex gap-1.5 relative overflow-x-auto px-4 max-sm:w-screen sm:mx-0 sm:px-0" role="group" aria-label="Filters">
           <Select aria-label="Stage of best deal" value={query.stage} onChange={(e) => router.replace(url({ stage: e.target.value || null, page: null }), { scroll: false })} className={cn("h-7 w-auto shrink-0 text-xs font-medium max-sm:h-9", query.stage ? "border-primary bg-positive-bg text-positive" : "text-muted-foreground")}>
-            <option value="">Any stage</option>
+            <option value="">{stageOptions.some((o) => o.value.endsWith(":*")) ? "Any pipeline" : "Any stage"}</option>
             {stageOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </Select>
           <ChipLink href={toggleFilter("score60")} active={query.filters.includes("score60")}>Score 60+</ChipLink>

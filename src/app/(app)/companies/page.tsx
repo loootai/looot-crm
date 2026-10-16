@@ -32,7 +32,11 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
     );
   }
   const [all, pipelines] = await Promise.all([store.demo && sp.state === "empty" ? [] : companyRows(store), loadPipelines(store)]);
-  const stageOptions = pipelines.flatMap((p) => p.stages.filter((s) => s.kind === "open").map((s) => ({ value: `${p.id}:${s.key}`, label: pipelines.length > 1 ? `${p.name}: ${s.label}` : `Best deal: ${s.label}` })));
+  // With several pipelines, "In Partnerships" lists every company with an open deal there, whatever the stage.
+  const stageOptions = pipelines.flatMap((p) => [
+    ...(pipelines.length > 1 ? [{ value: `${p.id}:*`, label: `In ${p.name}` }] : []),
+    ...p.stages.filter((s) => s.kind === "open").map((s) => ({ value: `${p.id}:${s.key}`, label: pipelines.length > 1 ? `${p.name}: ${s.label}` : `Best deal: ${s.label}` })),
+  ]);
   const currency = primaryPipeline(pipelines)?.currency ?? "USD";
   const query: CompaniesQuery = {
     q: (sp.q ?? "").trim(),
@@ -49,7 +53,7 @@ export default async function CompaniesPage({ searchParams }: { searchParams: Pr
     if (query.filters.includes("open") && !r.openValueCents && !r.bestStage) return false;
     if (query.filters.includes("noemail") && r.hasEmail) return false;
     // "pipelineId:stage", or a bare stage key from links made before pipelines.
-    if (query.stage && !r.openStages.some((x) => x === query.stage || x.endsWith(`:${query.stage}`))) return false;
+    if (query.stage && !r.openStages.some((x) => x === query.stage || x.endsWith(`:${query.stage}`) || (query.stage.endsWith(":*") && x.startsWith(query.stage.slice(0, -1))))) return false;
     return true;
   });
   const key = SORTS[query.sort];
