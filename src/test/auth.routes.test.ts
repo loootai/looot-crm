@@ -1,17 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { actionNames, PUBLIC_ROUTES, routeMap } from "./routeMap";
+import { actionNames, BEARER_ROUTES, PUBLIC_ROUTES, routeMap } from "./routeMap";
 
 type FakeUser = { id: string; email: string; email_confirmed_at: string } | null;
 let user: FakeUser = null;
+let joined = false;
+let nextCookie: string | undefined;
 const DB_TOUCHED = "db touched";
 
-vi.mock("next/headers", () => ({ cookies: async () => ({ getAll: () => [], set: () => {} }) }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ getAll: () => [], get: (n: string) => (n === "crm_next" && nextCookie ? { name: n, value: nextCookie } : undefined), set: () => {} }) }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/navigation", () => ({ redirect: (to: string) => { throw new Error(`redirect:${to}`); } }));
 vi.mock("@supabase/ssr", () => ({
   createServerClient: () => ({
     auth: { getUser: async () => ({ data: { user } }), signOut: async () => ({}), exchangeCodeForSession: async () => ({ error: null }) },
     from: () => { throw new Error("db touched"); },
+    rpc: async (fn: string) => {
+      // Joining the workspace is the first database call of an allowed user. Anything else counts as touching data.
+      if (fn !== "join_workspace") throw new Error("db touched");
+      joined = true;
+      return { data: { workspace_id: "w1", role: "owner", name: "Workspace" }, error: null };
+    },
+  }),
+}));
+
+// The MCP endpoint builds its own client from the bearer token. "token-<email>" stands for a valid Supabase access token.
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: () => ({
+    auth: { getUser: async (token: string) => ({ data: { user: token.startsWith("token-") ? signedIn(token.slice(6)) : null } }) },
+    from: () => { throw new Error("db touched"); },
+    rpc: async (fn: string) => {
+      if (fn !== "join_workspace") throw new Error("db touched");
+      joined = true;
+      return { data: { workspace_id: "w1", role: "owner", name: "Workspace" }, error: null };
+    },
   }),
 }));
 
@@ -30,7 +51,7 @@ async function call(file: string, method: string): Promise<{ status: number; tou
   }
 }
 
-const routes = routeMap().filter((r) => !PUBLIC_ROUTES.includes(r.url));
+const routes = routeMap().filter((r) => !PUBLIC_ROUTES.includes(r.url) && !BEARER_ROUTES.includes(r.url));
 
 beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_DEMO", "");
@@ -42,6 +63,8 @@ beforeEach(() => {
   vi.stubEnv("SPEND_RATE_LIMIT_PER_MIN", "1000");
   vi.resetModules();
   user = null;
+  joined = false;
+  nextCookie = undefined;
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -61,6 +84,7 @@ describe.each(routes.flatMap((r) => r.methods.map((m) => ({ ...r, method: m })))
     user = signedIn("stranger@evil.example");
     const r = await call(file, method);
     expect(r.touchedDb).toBe(false);
+    expect(joined).toBe(false);
     expect(r.status).toBe(403);
   });
   it("is closed to everyone when no allow-list is set", async () => {
@@ -122,6 +146,60 @@ describe("auth callback", () => {
   it("follows a same-origin relative next", async () => {
     const res = await cb(`code=abc&next=${encodeURIComponent("/pipeline")}`);
     expect(res.headers.get("location")).toBe("http://localhost:3000/pipeline");
+  });
+  it("follows the next the login form remembered in a cookie, and still refuses another origin", async () => {
+    nextCookie = encodeURIComponent("/oauth/consent?authorization_id=a1");
+    expect((await cb("code=abc")).headers.get("location")).toBe("http://localhost:3000/oauth/consent?authorization_id=a1");
+    nextCookie = encodeURIComponent("//evil.example");
+    expect((await cb("code=abc")).headers.get("location")).toBe("http://localhost:3000/");
+    nextCookie = "%E0%A4%A";
+    expect((await cb("code=abc")).headers.get("location")).toBe("http://localhost:3000/");
+  });
+});
+
+describe("MCP endpoint", () => {
+  const mcp = async (token?: string) => {
+    const mod = await import("../app/mcp/route");
+    const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return mod.POST(new Request("http://localhost/mcp", { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) }));
+  };
+  it("ignores the cookie session and asks for a bearer token", async () => {
+    user = signedIn("owner@acme.example");
+    const res = await mcp();
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toContain('resource_metadata="http://localhost/.well-known/oauth-protected-resource"');
+    expect(joined).toBe(false);
+  });
+  it("refuses a token Supabase does not recognise", async () => {
+    const res = await mcp("garbage");
+    expect(res.status).toBe(401);
+    expect(res.headers.get("WWW-Authenticate")).toContain('error="invalid_token"');
+  });
+  it("refuses a valid token for someone not on the list, before touching data", async () => {
+    expect((await mcp("token-stranger@evil.example")).status).toBe(403);
+    expect(joined).toBe(false);
+  });
+  it("is closed to everyone when no allow-list is set", async () => {
+    vi.stubEnv("LOOOT_CRM_ALLOWED_EMAILS", "");
+    expect((await mcp("token-owner@acme.example")).status).toBe(503);
+    expect(joined).toBe(false);
+  });
+  it("lists the tools for a user on the list", async () => {
+    const res = await mcp("token-Owner@Acme.example");
+    expect(res.status).toBe(200);
+    expect(joined).toBe(true);
+    expect((await res.json()).result.tools.length).toBe(11);
+  });
+});
+
+describe("OAuth metadata", () => {
+  it("is public and names the project's Supabase OAuth server", async () => {
+    for (const r of routeMap().filter((x) => x.url.startsWith("/.well-known/"))) {
+      const mod = await import(/* @vite-ignore */ r.file);
+      const body = await (await mod.GET(new Request("https://crm.example" + r.url))).json();
+      expect(body).toMatchObject({ resource: "https://crm.example/mcp", authorization_servers: ["http://127.0.0.1:1/auth/v1"] });
+    }
   });
 });
 

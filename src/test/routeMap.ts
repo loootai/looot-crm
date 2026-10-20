@@ -33,7 +33,10 @@ export function routeMap(): RouteEntry[] {
 }
 
 /** Routes a third party must reach without a session. Anything not listed here is private. */
-export const PUBLIC_ROUTES = ["/auth/callback"];
+export const PUBLIC_ROUTES = ["/auth/callback", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"];
+
+/** Routes that take a bearer token instead of the cookie session. They have their own tests in auth.routes.test.ts. */
+export const BEARER_ROUTES = ["/mcp"];
 
 /** Names of the exported server actions in src/app/actions.ts. */
 export function actionNames(): string[] {

@@ -6,7 +6,7 @@ import { DueCheck, LinkButton, MarkGroupRead, RefreshIntentButton, SignalActions
 import { dueLabel, money, relative } from "@/lib/format";
 import { todayData } from "@/lib/queries";
 import { requireSession } from "@/lib/store";
-import { KIND_LABEL, SIGNAL_KINDS, STAGE_LABEL, type SignalKind } from "@/lib/types";
+import { KIND_LABEL, SIGNAL_KINDS, type SignalKind } from "@/lib/types";
 
 export const metadata: Metadata = { title: "Today" };
 
@@ -24,6 +24,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const minScore = sp.score === "60" ? 60 : undefined;
   const now = new Date();
   const data = await todayData(store, { kinds, minScore }, now);
+  const cur = data.pipeline?.currency ?? "USD";
   const empty = (store.demo && sp.state === "empty") || data.companies === 0;
 
   if (empty) {
@@ -169,22 +170,22 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
           </section>
 
           <section aria-labelledby="pipe-h">
-            <SectionTitle aside={<Link href="/pipeline" className="text-xs font-medium text-primary hover:underline">Open the board</Link>}>
-              <span id="pipe-h">Pipeline</span>
+            <SectionTitle aside={<Link href={data.pipeline ? `/pipeline?p=${data.pipeline.id}` : "/pipeline"} className="text-xs font-medium text-primary hover:underline">Open the board</Link>}>
+              <span id="pipe-h">{data.pipeline?.name ?? "Pipeline"}</span>
             </SectionTitle>
             <dl className="mt-3 grid grid-cols-2 gap-4">
               <div>
                 <dt className="text-xs text-muted-foreground">Open pipeline</dt>
-                <dd className="tnum mt-1 text-[32px] font-semibold leading-none tracking-[-0.02em]">{money(data.openValueCents)}</dd>
+                <dd className="tnum mt-1 text-[32px] font-semibold leading-none tracking-[-0.02em]">{money(data.openValueCents, cur)}</dd>
                 <dd className="mt-1.5 text-xs text-muted-foreground">in {data.openDeals} deals</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Closing in 30 days</dt>
-                <dd className="tnum mt-1 text-[32px] font-semibold leading-none tracking-[-0.02em]">{money(data.closing30.valueCents)}</dd>
+                <dd className="tnum mt-1 text-[32px] font-semibold leading-none tracking-[-0.02em]">{money(data.closing30.valueCents, cur)}</dd>
                 <dd className="mt-1.5 text-xs text-muted-foreground">in {data.closing30.deals} deals</dd>
               </div>
             </dl>
-            <StackedBar className="mt-4" label="Open pipeline by stage" segments={data.stages.map((s) => ({ label: STAGE_LABEL[s.stage], value: s.valueCents }))} />
+            <StackedBar className="mt-4" label="Open pipeline by stage" segments={data.stages.map((s) => ({ label: s.label, value: s.valueCents }))} />
             <table className="mt-2 w-full text-13">
               <thead className="sr-only">
                 <tr>
@@ -199,13 +200,13 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
                     <th scope="row" className="h-8 border-b border-border text-left font-normal">
                       <span className="flex items-center gap-2">
                         <RampDot i={i} />
-                        {STAGE_LABEL[s.stage]}
+                        {s.label}
                       </span>
                     </th>
                     <td className="tnum h-8 border-b border-border text-right text-muted-foreground">
                       {s.deals} {s.deals === 1 ? "deal" : "deals"}
                     </td>
-                    <td className="tnum h-8 w-28 border-b border-border text-right font-mono text-xs">{money(s.valueCents)}</td>
+                    <td className="tnum h-8 w-28 border-b border-border text-right font-mono text-xs">{money(s.valueCents, cur)}</td>
                   </tr>
                 ))}
               </tbody>

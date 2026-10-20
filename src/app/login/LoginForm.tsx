@@ -6,12 +6,18 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { browserSupabase } from "@/lib/supabase/browser";
 
-export function LoginForm({ linkError }: { linkError: boolean }) {
+/** Remembers where to go after the sign-in link, in a short-lived cookie, so the callback URL stays the one on the Supabase allow-list. */
+export const NEXT_COOKIE = "crm_next";
+
+export function LoginForm({ linkError, next = "/" }: { linkError: boolean; next?: string }) {
   const [email, setEmail] = React.useState("");
   const [sent, setSent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(linkError ? "That sign-in link has expired or was already used. Ask for a new one." : null);
   const [pending, setPending] = React.useState<"email" | "google" | null>(null);
-  const redirect = () => `${window.location.origin}/auth/callback`;
+  const redirect = () => {
+    document.cookie = next === "/" ? `${NEXT_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax` : `${NEXT_COOKIE}=${encodeURIComponent(next)}; Path=/; Max-Age=900; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
+    return `${window.location.origin}/auth/callback`;
+  };
   const magic = async (e: React.FormEvent) => {
     e.preventDefault();
     setPending("email");

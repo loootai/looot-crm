@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import { redirect } from "next/navigation";
+import { safeNext } from "@/lib/access";
 import { LoginForm } from "./LoginForm";
 
 export const metadata: Metadata = { title: "Sign in" };
@@ -11,7 +12,7 @@ const POINTS = [
   ["About $0.03 to refresh one account", "No data subscription. You see the price before every run, and a failed run costs nothing."],
 ];
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {
   if (process.env.NEXT_PUBLIC_DEMO === "1") redirect("/");
   const sp = await searchParams;
   const configured = !!process.env.NEXT_PUBLIC_SUPABASE_URL && !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -38,7 +39,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
           <h1 className="text-xl font-semibold tracking-[-0.01em]">Sign in to looot CRM</h1>
           <p className="mb-6 mt-1 text-13 text-muted-foreground">Use your work email. No password to remember.</p>
           {configured ? (
-            <LoginForm linkError={sp.error === "link"} />
+            <LoginForm linkError={sp.error === "link"} next={safeNext(sp.next)} />
           ) : (
             <div role="alert" className="rounded-md border border-warning/40 bg-warning-bg p-4 text-13">
               <p className="font-medium">Supabase is not configured</p>

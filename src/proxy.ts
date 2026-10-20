@@ -9,6 +9,8 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 export async function proxy(request: NextRequest) {
   const path = request.nextUrl.pathname;
+  // The MCP endpoint and its OAuth metadata check their own bearer token; they never use the cookie session.
+  if (path === "/mcp" || path.startsWith("/mcp/") || path.startsWith("/.well-known/")) return NextResponse.next({ request });
   if (process.env.NEXT_PUBLIC_DEMO === "1") {
     if (path.startsWith("/login")) return NextResponse.redirect(new URL("/", request.url));
     return NextResponse.next({ request });
@@ -38,7 +40,8 @@ export async function proxy(request: NextRequest) {
     if (open || path === "/setup" || path === "/not-authorised") return response;
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.search = "";
+    // Come back here after signing in, e.g. to the consent page of an app being connected.
+    url.search = path === "/" ? "" : `?next=${encodeURIComponent(path + request.nextUrl.search)}`;
     return NextResponse.redirect(url);
   }
   const state = accessFor(data.user);

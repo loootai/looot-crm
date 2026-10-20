@@ -22,7 +22,7 @@ const loc = (r: Response) => r.headers.get("location");
 describe("proxy", () => {
   it("sends anon page requests to /login and answers anon API calls 401", async () => {
     const { proxy } = await import("./proxy");
-    expect(loc(await proxy(req("/companies")))).toBe("http://localhost:3000/login");
+    expect(loc(await proxy(req("/companies")))).toBe("http://localhost:3000/login?next=%2Fcompanies");
     expect((await proxy(req("/api/export?table=deals"))).status).toBe(401);
   });
   it("sends a stranger to /not-authorised and answers APIs 403", async () => {
@@ -48,6 +48,19 @@ describe("proxy", () => {
   it("keeps the sign-in, callback, setup and not-authorised pages reachable", async () => {
     const { proxy } = await import("./proxy");
     for (const p of ["/login", "/auth/callback", "/setup", "/not-authorised"]) expect(loc(await proxy(req(p))), p).toBeNull();
+  });
+  it("keeps the consent page address through sign-in", async () => {
+    const { proxy } = await import("./proxy");
+    expect(loc(await proxy(req("/oauth/consent?authorization_id=a1")))).toBe("http://localhost:3000/login?next=%2Foauth%2Fconsent%3Fauthorization_id%3Da1");
+  });
+  it("leaves /mcp and the OAuth metadata to their own bearer check", async () => {
+    const { proxy } = await import("./proxy");
+    user = off;
+    for (const p of ["/mcp", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
+      const res = await proxy(req(p));
+      expect(res.status, p).toBe(200);
+      expect(loc(res), p).toBeNull();
+    }
   });
   it("demo mode stays open with no sign-in", async () => {
     vi.stubEnv("NEXT_PUBLIC_DEMO", "1");
