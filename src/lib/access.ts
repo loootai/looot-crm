@@ -35,6 +35,11 @@ export function accessFor(user: { email?: string | null; email_confirmed_at?: st
   return at > 0 && allow.domains.includes(email.slice(at + 1)) ? "ok" : "denied";
 }
 
+/** Whether an email, confirmed or not yet, matches the allow-list. Used to warn before inviting someone who could not sign in. */
+export function emailAllowed(email: string, env: Env = process.env): boolean {
+  return accessFor({ email, email_confirmed_at: "listed" }, env) === "ok";
+}
+
 /** A post-sign-in destination that is a same-origin relative path, or "/" for anything else. */
 export function safeNext(value: string | null | undefined): string {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\u0000-\u001f]/.test(value)) return "/";

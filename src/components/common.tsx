@@ -146,6 +146,22 @@ export function CompanyLink({ id, name, domain, className }: { id: string; name:
   );
 }
 
+/** The pipelines a company or person is in, each with its stage. Links to that board unless `plain`, for use inside another link. Closed stages are muted. */
+export function PipelineTags({ tags, plain, className }: { tags: { id: string; name: string; stage: string; closed: boolean }[]; plain?: boolean; className?: string }) {
+  if (!tags.length) return <span className={cn("text-muted-foreground", className)}>none</span>;
+  return (
+    <span className={cn("flex min-w-0 flex-wrap gap-1", className)}>
+      {tags.map((t) => {
+        const tag = cn("inline-flex max-w-full items-center gap-1 truncate rounded-sm border border-border px-1.5 py-px text-xs", !plain && "hover:border-border-strong", t.closed && "opacity-60");
+        const body = (<><span className="truncate font-medium">{t.name}</span><span className="shrink-0 text-muted-foreground">{t.stage}</span></>);
+        return plain
+          ? <span key={t.id} className={tag}>{body}</span>
+          : <Link key={t.id} href={`/pipeline?p=${t.id}`} title={`${t.name}: ${t.stage}`} className={tag}>{body}</Link>;
+      })}
+    </span>
+  );
+}
+
 /** Small "in" glyph for LinkedIn links. lucide no longer ships brand icons. */
 export function LinkedinGlyph({ className }: { className?: string }) {
   return (

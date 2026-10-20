@@ -1,9 +1,11 @@
 import "server-only";
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { seedDemo } from "@/demo/seed";
 import { accessFor, type AccessState } from "../access";
 import { serverSupabase } from "../supabase/server";
-import { MemoryStore } from "./demoStore";
+import type { WorkspaceInfo, WorkspaceRole } from "../types";
+import { DEMO_WORKSPACE, MemoryStore } from "./demoStore";
 import { SupabaseStore } from "./supabaseStore";
 import type { Store } from "./types";
 
@@ -20,13 +22,18 @@ export function demoStore(): MemoryStore {
 export interface Session {
   store: Store;
   user: { id: string; email: string; name: string };
+  workspace: WorkspaceInfo;
 }
 
 export type Gate = { kind: "anon" } | { kind: "setup" } | { kind: "denied"; email: string } | { kind: "ok"; session: Session };
 
-/** Who is asking and whether the allow-list lets them in. Demo mode is always "ok" and never creates a Supabase client. */
-export async function resolveGate(): Promise<Gate> {
-  if (IS_DEMO) return { kind: "ok", session: { store: demoStore(), user: { id: "demo", email: "ines@harborline.example", name: "Inès Marchetti" } } };
+/**
+ * Who is asking and whether the allow-list lets them in. Demo mode is always "ok" and never creates a
+ * Supabase client. A user who passes the allow-list joins their workspace: an invitation for their
+ * email is claimed, or a new workspace is made with them as the owner. Cached for one request.
+ */
+export const resolveGate = cache(async (): Promise<Gate> => {
+  if (IS_DEMO) return { kind: "ok", session: { store: demoStore(), user: { id: "demo", email: "ines@harborline.example", name: "Inès Marchetti" }, workspace: { ...DEMO_WORKSPACE, name: demoStore().workspaceName } } };
   const db = await serverSupabase();
   const { data } = await db.auth.getUser();
   if (!data.user) return { kind: "anon" };
@@ -35,8 +42,12 @@ export async function resolveGate(): Promise<Gate> {
   if (state === "setup") return { kind: "setup" };
   if (state === "denied") return { kind: "denied", email };
   const name = (data.user.user_metadata?.full_name as string | undefined) ?? email.split("@")[0] ?? "You";
-  return { kind: "ok", session: { store: new SupabaseStore(db, data.user.id), user: { id: data.user.id, email, name } } };
-}
+  const { data: joined, error } = await db.rpc("join_workspace");
+  if (error || !joined) throw new Error(`Could not open your workspace: ${error?.message ?? "no answer"}. Check that every migration in supabase/migrations is applied.`);
+  const ws = joined as { workspace_id: string; role: WorkspaceRole; name: string };
+  const workspace: WorkspaceInfo = { id: ws.workspace_id, role: ws.role, name: ws.name };
+  return { kind: "ok", session: { store: new SupabaseStore(db, workspace.id), user: { id: data.user.id, email, name }, workspace } };
+});
 
 /** The store for this request, or null when nobody is signed in or the user is not on the allow-list. */
 export async function getSession(): Promise<Session | null> {

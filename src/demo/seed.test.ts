@@ -13,7 +13,7 @@ describe("demo seed", () => {
     expect({ companies: d.companies.length, contacts: d.contacts.length, deals: d.deals.length, signals: d.signals.length, activities: d.activities.length, actions: d.actions.length, runs: d.runs.length }).toEqual({
       companies: 14,
       contacts: 41,
-      deals: 17,
+      deals: 20,
       signals: 94,
       activities: 64,
       actions: 23,
@@ -21,7 +21,7 @@ describe("demo seed", () => {
     });
   });
   it("has open pipeline of $627,500 in 13 deals", () => {
-    const open = d.deals.filter((x) => OPEN_STAGES.includes(x.stage));
+    const open = d.deals.filter((x) => x.pipeline_id === "pl-sales" && OPEN_STAGES.includes(x.stage));
     expect(open).toHaveLength(13);
     expect(open.reduce((s, x) => s + x.amount_cents, 0)).toBe(62_750_000);
   });
@@ -82,5 +82,10 @@ describe("demo seed", () => {
   it("uses no real company and no filler text", () => {
     const text = JSON.stringify(d).toLowerCase();
     for (const w of ["lorem", "ipsum", "acme", "john doe", "jane doe"]) expect(text).not.toContain(w);
+  });
+  it("has a Sales and a Partnerships pipeline, and every deal sits in a stage of its own pipeline", () => {
+    expect(d.pipelines.map((p) => p.name)).toEqual(["Sales", "Partnerships"]);
+    for (const deal of d.deals) expect(d.pipeline_stages.some((s) => s.pipeline_id === deal.pipeline_id && s.key === deal.stage), deal.id).toBe(true);
+    expect(d.deals.filter((x) => x.pipeline_id === "pl-partners")).toHaveLength(3);
   });
 });
