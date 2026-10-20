@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Check, Copy, MailCheck, Plus, Search, Sparkles, Trash2, UserSearch, X } from "lucide-react";
 import { addCandidates, createContact, loadContactTimeline } from "@/app/actions";
 import { ConfirmDelete } from "@/components/companies/dialogs";
-import { EmailStatusLabel, EmptyState, LinkedinGlyph, Monogram, PersonAvatar } from "@/components/common";
+import { EmailStatusLabel, EmptyState, LinkedinGlyph, Monogram, PersonAvatar, PipelineTags } from "@/components/common";
 import { useQuote } from "@/components/quote";
 import { useHotkeys } from "@/components/shell/hotkeys";
 import { Composer, Timeline } from "@/components/timeline";
@@ -38,6 +38,7 @@ export function PeopleTable({ rows, prices, roleKeywords, companies, bulkMax, sc
   const quote = useQuote();
   const [q, setQ] = React.useState("");
   const [company, setCompany] = React.useState("");
+  const [pipeline, setPipeline] = React.useState("");
   const [status, setStatus] = React.useState<"" | EmailStatus>("");
   const [hasEmail, setHasEmail] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -60,10 +61,12 @@ export function PeopleTable({ rows, prices, roleKeywords, companies, bulkMax, sc
   const shown = rows.filter((r) => {
     if (needle && !`${r.name} ${r.title ?? ""}`.toLowerCase().includes(needle)) return false;
     if (company && r.company_id !== company) return false;
+    if (pipeline && !r.pipelines.some((t) => t.id === pipeline)) return false;
     if (status && r.email_status !== status) return false;
     if (hasEmail && !r.email) return false;
     return true;
   });
+  const pipelineOptions = [...new Map(rows.flatMap((r) => r.pipelines).map((t) => [t.id, t.name])).entries()];
   const ids = [...selected].filter((id) => shown.some((r) => r.id === id));
   const over = ids.length > bulkMax;
   const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -126,6 +129,12 @@ export function PeopleTable({ rows, prices, roleKeywords, companies, bulkMax, sc
               {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </Select>
           )}
+          {pipelineOptions.length > 0 && (
+            <Select aria-label="Pipeline" value={pipeline} onChange={(e) => setPipeline(e.target.value)} className={cn("h-7 w-40 text-xs font-medium max-sm:h-9", pipeline ? "border-primary bg-positive-bg text-positive" : "text-muted-foreground")}>
+              <option value="">Any pipeline</option>
+              {pipelineOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </Select>
+          )}
           <Select aria-label="Email status" value={status} onChange={(e) => setStatus(e.target.value as EmailStatus | "")} className={cn("h-7 w-36 text-xs font-medium max-sm:h-9", status ? "border-primary bg-positive-bg text-positive" : "text-muted-foreground")}>
             <option value="">Any email status</option>
             <option value="verified">Verified</option>
@@ -155,16 +164,17 @@ export function PeopleTable({ rows, prices, roleKeywords, companies, bulkMax, sc
       )}
 
       {shown.length === 0 ? (
-        <EmptyState title="No person matches these filters" actions={<Button onClick={() => { setQ(""); setCompany(""); setStatus(""); setHasEmail(false); }}>Clear filters</Button>} />
+        <EmptyState title="No person matches these filters" actions={<Button onClick={() => { setQ(""); setCompany(""); setPipeline(""); setStatus(""); setHasEmail(false); }}>Clear filters</Button>} />
       ) : (
         <>
           <div className="scroll-thin mt-3 relative overflow-x-auto rounded-md border border-border bg-surface max-sm:hidden">
-            <Table className={scoped ? "min-w-[720px]" : "min-w-[1040px]"}>
+            <Table className={scoped ? "min-w-[900px]" : "min-w-[1220px]"}>
               <thead>
                 <tr>
                   <Th className="w-9 pr-0"><Checkbox checked={allOn ? true : ids.length ? "indeterminate" : false} onCheckedChange={(v) => setSelected(v === true ? new Set(shown.map((r) => r.id)) : new Set())} aria-label="Select all people shown" /></Th>
                   <Th className="min-w-56">Name</Th>
                   {!scoped && <Th>Company</Th>}
+                  <Th>Pipelines</Th>
                   <Th>Email</Th>
                   <Th>Phone</Th>
                   <Th className="w-10"><span className="sr-only">LinkedIn</span></Th>
@@ -195,6 +205,7 @@ export function PeopleTable({ rows, prices, roleKeywords, companies, bulkMax, sc
                           ) : <span className="text-muted-foreground">none</span>}
                         </Td>
                       )}
+                      <Td className="min-w-44 max-w-72"><PipelineTags tags={r.pipelines} /></Td>
                       <Td>
                         <span className="flex items-center gap-2.5">
                           {r.email && <span className="max-w-52 truncate">{r.email}</span>}
@@ -225,6 +236,7 @@ export function PeopleTable({ rows, prices, roleKeywords, companies, bulkMax, sc
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{r.name}</span>
                     <span className="block truncate text-13 text-muted-foreground">{[r.title, scoped ? null : r.companyName].filter(Boolean).join(", ")}</span>
+                    {r.pipelines.length > 0 && <PipelineTags tags={r.pipelines} plain className="mt-1" />}
                     <span className="mt-1 flex items-center gap-2 text-xs"><EmailStatusLabel status={r.email_status} />{r.phone && <span className="text-muted-foreground">has phone</span>}</span>
                   </span>
                 </button>

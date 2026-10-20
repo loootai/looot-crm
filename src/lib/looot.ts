@@ -88,6 +88,14 @@ export class LoootClient {
     });
   }
 
+  /**
+   * Paid. Runs one pinned endpoint, for jobs whose filters only that provider takes (such as a people
+   * search by country and industry). No provider fallback. The same idempotency key never charges twice.
+   */
+  runEndpoint(endpointId: string, input: Record<string, unknown>, idempotencyKey: string): Promise<LoootRun> {
+    return this.#request("POST", "/v1/runs?wait=30", { endpointId, input, idempotencyKey });
+  }
+
   /** Free. Reads a run again. */
   getRun(runId: string): Promise<LoootRun> {
     return this.#request("GET", `/v1/runs/${encodeURIComponent(runId)}`);

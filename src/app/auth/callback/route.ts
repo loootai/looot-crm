@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { safeNext } from "@/lib/access";
 import { serverSupabase } from "@/lib/supabase/server";
@@ -9,5 +10,19 @@ export async function GET(request: Request) {
   if (process.env.NEXT_PUBLIC_DEMO === "1" || !code) return NextResponse.redirect(new URL("/", url.origin));
   const supabase = await serverSupabase();
   const { error } = await supabase.auth.exchangeCodeForSession(code);
-  return NextResponse.redirect(new URL(error ? "/login?error=link" : safeNext(url.searchParams.get("next")), url.origin));
+  // `next` from the query, else the cookie the login form set (see LoginForm), used once.
+  const jar = await cookies();
+  const remembered = jar.get("crm_next")?.value;
+  const res = NextResponse.redirect(new URL(error ? "/login?error=link" : safeNext(url.searchParams.get("next") ?? decodeNext(remembered)), url.origin));
+  if (remembered) res.cookies.set("crm_next", "", { path: "/", maxAge: 0 });
+  return res;
+}
+
+function decodeNext(v: string | undefined): string | null {
+  if (!v) return null;
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return null;
+  }
 }

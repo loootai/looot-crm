@@ -105,6 +105,9 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
   const settings = await loadSettings(store);
   const { plan } = await planFor(store, req, deps.prices);
   const max = clampMax(req.maxCostUsd, deps.perActionMaxUsd, settings.action_ceiling_usd);
+  // Keywords on an intent refresh replace the role keywords, so the hiring filter matches the query that was sent.
+  const keywords = req.kind === "intent_refresh" ? (req.options?.keywords ?? []).map((k) => k.trim()).filter(Boolean) : [];
+  const matchSettings = keywords.length ? { ...settings, role_keywords: keywords } : settings;
 
   const inserted = await store.insertIgnore(
     "actions",
@@ -190,7 +193,7 @@ export async function executeAction(deps: RunnerDeps, req: ActionRequest): Promi
       const cost = round6(Math.max(0, costOf(run) ?? 0));
       spent = round6(spent + cost);
       if (run.status === "completed") {
-        const applied = await applyResult({ store, line, run, settings, now: now(), runId: row.id });
+        const applied = await applyResult({ store, line, run, settings: matchSettings, now: now(), runId: row.id });
         if (applied.email !== undefined) found.set(line.targetId, { email: applied.email });
         if (applied.candidates) candidates.push(...applied.candidates);
         patch = { looot_run_id: run.runId, status: run.status, outcome: applied.outcome, cost_usd: cost, note: applied.note ?? null };

@@ -49,6 +49,10 @@ describe("job and news filters", () => {
   });
   it("tags headlines", () => {
     expect(tagHeadline("Brightwell raises $48M Series C")).toBe("funding");
+    expect(tagHeadline("Harborline reforça cibersegurança para cumprir a NIS2")).toBe("security");
+    expect(extractItems({ output: { data: { items: [{ title: "Harborline news", url: "https://n.example/1", createdUtc: 1695222655 }] } } })[0].date).toBe("2023-09-20T15:10:55.000Z");
+    expect(tagHeadline("Ransomware attack hits Northgate Parcel")).toBe("security");
+    expect(tagHeadline("Brightwell names new CISO")).toBe("security");
     expect(tagHeadline("Selwyn Marine Supply names Henrik Solberg chief operating officer")).toBe("leadership");
     expect(tagHeadline("Northgate Parcel launches Sunday delivery")).toBe("launch");
     expect(tagHeadline("Ostrava and Tidewater sign a partnership")).toBe("partnership");

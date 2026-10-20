@@ -75,6 +75,7 @@ export interface PlanInput {
   steps?: StepId[];
   prices: PriceMap;
   settings: Pick<Settings, "role_keywords" | "default_pages">;
+  /** keywords: role words for find_people; for intent_refresh, words that narrow news and replace the role keywords of hiring. */
   options?: { keywords?: string[]; limit?: number };
 }
 
@@ -101,6 +102,8 @@ export function buildPlan(p: PlanInput): Plan {
   const allowed = new Set<StepId>(KIND_STEPS[p.kind]);
   const steps = (p.steps?.length ? p.steps : KIND_STEPS[p.kind]).filter((s) => allowed.has(s));
   const order = KIND_STEPS[p.kind].filter((s) => steps.includes(s));
+  // For an intent refresh, keywords narrow the news query and replace the role keywords of the hiring check.
+  const keywords = (p.options?.keywords ?? []).map((k) => k.trim()).filter(Boolean);
   const lines: PlanLine[] = [];
   const line = (step: StepId, targetType: "company" | "contact", targetId: string, targetLabel: string, input: Record<string, unknown>, url?: string) => {
     const jobId = STEP_JOB[step];
@@ -110,9 +113,9 @@ export function buildPlan(p: PlanInput): Plan {
   for (const c of p.companies ?? []) {
     for (const s of order) {
       if (s === "hiring") {
-        const words = p.settings.role_keywords.filter((k) => k.trim());
+        const words = (keywords.length ? keywords : p.settings.role_keywords).filter((k) => k.trim());
         line(s, "company", c.id, c.name, { query: words.length ? `${c.name} ${words.join(" OR ")}` : c.name, company: c.name });
-      } else if (s === "news") line(s, "company", c.id, c.name, { query: `"${c.name}"` });
+      } else if (s === "news") line(s, "company", c.id, c.name, { query: keywords.length ? `"${c.name}" (${keywords.join(" OR ")})` : `"${c.name}"` });
       else if (s === "tech" || s === "funding" || s === "enrich") line(s, "company", c.id, c.name, { domain: c.domain });
       else if (s === "site") for (const url of watchedPages(c, p.settings.default_pages)) line(s, "company", c.id, c.name, { url }, url);
     }

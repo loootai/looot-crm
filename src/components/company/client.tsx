@@ -13,12 +13,13 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { shortDate, usd4 } from "@/lib/format";
+import type { PipelineView } from "@/lib/pipelines";
 import type { StepId } from "@/lib/plan";
 import { KIND_CAPS, type ScoreResult } from "@/lib/score";
 import { KIND_LABEL, SIGNAL_KINDS, type Company, type SignalKind } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export function CompanyActions({ company }: { company: Pick<Company, "id" | "name"> }) {
+export function CompanyActions({ company, pipelines }: { company: Pick<Company, "id" | "name">; pipelines: PipelineView[] }) {
   const quote = useQuote();
   const router = useRouter();
   const refreshRef = React.useRef<HTMLButtonElement>(null);
@@ -45,7 +46,7 @@ export function CompanyActions({ company }: { company: Pick<Company, "id" | "nam
           <DropdownMenuItem danger onSelect={() => setDeleting(true)}><Trash2 /> Delete company</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      <NewDealDialog open={deal} onOpenChange={setDeal} companies={[]} fixedCompany={company.id} />
+      <NewDealDialog open={deal} onOpenChange={setDeal} pipelines={pipelines.filter((p) => p.subject === "company")} companies={[]} fixedCompany={company.id} />
       <ConfirmDelete open={deleting} onOpenChange={setDeleting} table="companies" ids={[company.id]} noun="company" onDone={() => router.push("/companies")} />
     </div>
   );

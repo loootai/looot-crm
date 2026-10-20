@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef, type RowSelectionState, type VisibilityState } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Columns3, Plus, RefreshCw, Search, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { Sparkline } from "@/components/charts";
-import { ChipLink, EmptyState, Monogram, ScoreChip, SignalIcon } from "@/components/common";
+import { ChipLink, EmptyState, Monogram, PipelineTags, ScoreChip, SignalIcon } from "@/components/common";
 import { useQuote } from "@/components/quote";
 import { useHotkeys } from "@/components/shell/hotkeys";
 import { Button } from "@/components/ui/button";
@@ -16,11 +16,10 @@ import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMe
 import { Table, Td, Th } from "@/components/ui/table";
 import { dayDiff, money, num, relative } from "@/lib/format";
 import type { CompanyRow } from "@/lib/queries";
-import { OPEN_STAGES, STAGE_LABEL } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AddCompanyDialog, ConfirmDelete, ImportSheet } from "./dialogs";
 
-const HIDEABLE: [string, string][] = [["topSignal", "Top signal"], ["industry", "Industry"], ["employees", "Employees"], ["openValueCents", "Open deal value"], ["contacts", "Contacts"], ["lastActivity", "Last activity"], ["intentCheckedAt", "Intent checked"]];
+const HIDEABLE: [string, string][] = [["pipelines", "Pipelines"], ["topSignal", "Top signal"], ["industry", "Industry"], ["employees", "Employees"], ["openValueCents", "Open deal value"], ["contacts", "Contacts"], ["lastActivity", "Last activity"], ["intentCheckedAt", "Intent checked"]];
 
 export interface CompaniesQuery {
   q: string;
@@ -31,7 +30,7 @@ export interface CompaniesQuery {
   page: number;
 }
 
-export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains, anyCompanies }: { rows: CompanyRow[]; total: number; pageSize: number; query: CompaniesQuery; bulkMax: number; domains: string[]; anyCompanies: boolean }) {
+export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains, anyCompanies, stageOptions = [], currency = "USD" }: { rows: CompanyRow[]; total: number; pageSize: number; query: CompaniesQuery; bulkMax: number; domains: string[]; anyCompanies: boolean; stageOptions?: { value: string; label: string }[]; currency?: string }) {
   const router = useRouter();
   const path = usePathname();
   const sp = useSearchParams();
@@ -93,6 +92,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
           <span className="min-w-0 shrink-[20] truncate text-xs text-muted-foreground max-2xl:hidden">{row.original.domain}</span>
         </Link>
       ) },
+      { id: "pipelines", header: "Pipelines", enableSorting: false, cell: ({ row }) => <PipelineTags tags={row.original.pipelines} /> },
       { id: "score", header: "Score", cell: ({ row }) => (
         <span className="flex items-center gap-2">
           <ScoreChip score={row.original.score} />
@@ -108,7 +108,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
       { id: "industry", header: "Industry", cell: ({ row }) => <span className="block truncate" title={row.original.industry ?? undefined}>{row.original.industry ?? ""}</span> },
       { id: "employees", header: "Employees", meta: { right: true }, cell: ({ row }) => <span className="tnum">{row.original.employees ? num(row.original.employees) : ""}</span> },
       { id: "openValueCents", header: "Open deals", meta: { right: true }, cell: ({ row }) => row.original.openValueCents ? (
-        <span className="tnum whitespace-nowrap">{money(row.original.openValueCents)} <span className="text-xs text-muted-foreground">{row.original.bestStage ? STAGE_LABEL[row.original.bestStage] : ""}</span></span>
+        <span className="tnum whitespace-nowrap">{money(row.original.openValueCents, currency)} <span className="text-xs text-muted-foreground">{row.original.bestStage ?? ""}</span></span>
       ) : <span className="text-muted-foreground">none</span> },
       { id: "contacts", header: "Contacts", meta: { right: true }, cell: ({ row }) => <span className="tnum">{row.original.contacts}</span> },
       { id: "lastActivity", header: "Last activity", cell: ({ row }) => <span className="whitespace-nowrap text-muted-foreground">{row.original.lastActivity ? relative(row.original.lastActivity, now) : "none"}</span> },
@@ -118,7 +118,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
         return <span className={cn("whitespace-nowrap", stale ? "font-medium text-warning" : "text-muted-foreground")}>{at ? relative(at, now) : "never"}{stale && <span className="sr-only"> (stale)</span>}</span>;
       } },
     ],
-    [now],
+    [now, currency],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -184,8 +184,8 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
         </div>
         <div className="scroll-thin -mx-4 flex gap-1.5 relative overflow-x-auto px-4 max-sm:w-screen sm:mx-0 sm:px-0" role="group" aria-label="Filters">
           <Select aria-label="Stage of best deal" value={query.stage} onChange={(e) => router.replace(url({ stage: e.target.value || null, page: null }), { scroll: false })} className={cn("h-7 w-auto shrink-0 text-xs font-medium max-sm:h-9", query.stage ? "border-primary bg-positive-bg text-positive" : "text-muted-foreground")}>
-            <option value="">Any stage</option>
-            {OPEN_STAGES.map((s) => <option key={s} value={s}>Best deal: {STAGE_LABEL[s]}</option>)}
+            <option value="">{stageOptions.some((o) => o.value.endsWith(":*")) ? "Any pipeline" : "Any stage"}</option>
+            {stageOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </Select>
           <ChipLink href={toggleFilter("score60")} active={query.filters.includes("score60")}>Score 60+</ChipLink>
           <ChipLink href={toggleFilter("open")} active={query.filters.includes("open")}>Has open deal</ChipLink>
@@ -228,7 +228,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
       ) : (
         <>
           <div className="scroll-thin mt-3 relative overflow-x-auto rounded-md border border-border bg-surface max-sm:hidden">
-            <Table className="min-w-[1040px]">
+            <Table className="min-w-[1220px]">
               <thead className="sticky top-0 z-10">
                 {table.getHeaderGroups().map((hg) => (
                   <tr key={hg.id}>
@@ -265,7 +265,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
                       {row.getVisibleCells().map((cell) => {
                         const right = (cell.column.columnDef.meta as { right?: boolean } | undefined)?.right;
                         return (
-                          <Td key={cell.id} className={cn("px-2 transition-colors duration-100", cell.column.id === "topSignal" ? "max-w-44 2xl:max-w-64" : cell.column.id === "industry" ? "max-w-36 2xl:max-w-56" : "max-w-56", bg, cell.column.id === "name" && "sticky left-9 z-[5] w-60 min-w-52 max-w-60 border-r", right && "text-right")}>
+                          <Td key={cell.id} className={cn("px-2 transition-colors duration-100", cell.column.id === "topSignal" ? "max-w-44 2xl:max-w-64" : cell.column.id === "pipelines" ? "min-w-44 max-w-72" : cell.column.id === "industry" ? "max-w-36 2xl:max-w-56" : "max-w-56", bg, cell.column.id === "name" && "sticky left-9 z-[5] w-60 min-w-52 max-w-60 border-r", right && "text-right")}>
                             {flexRender(cell.column.columnDef.cell, cell.getContext())}
                           </Td>
                         );
@@ -287,6 +287,7 @@ export function CompaniesTable({ rows, total, pageSize, query, bulkMax, domains,
                       <span className="truncate text-sm font-medium">{r.name}</span>
                       <ScoreChip score={r.score} className="ml-auto" />
                     </span>
+                    {r.pipelines.length > 0 && <PipelineTags tags={r.pipelines} plain className="mt-1" />}
                     <span className="mt-0.5 flex items-center gap-1.5 text-13 text-muted-foreground">
                       {r.topSignal ? (<><SignalIcon kind={r.topSignal.kind} className="size-3.5" /><span className="truncate">{r.topSignal.title}</span></>) : (r.intentCheckedAt ? "No signal in 90 days" : "Not checked yet")}
                     </span>

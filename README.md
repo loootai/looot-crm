@@ -8,7 +8,7 @@
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Floootai%2Flooot-crm&env=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,LOOOT_TOKEN&envDescription=Supabase%20project%20URL%20and%20anon%20key%2C%20plus%20a%20looot%20agent%20token&envLink=https%3A%2F%2Fgithub.com%2Floootai%2Flooot-crm%23run-the-web-app-with-sign-in&project-name=looot-crm&repository-name=looot-crm)
 
-An open-source CRM for a sales team of one to five people, with buying signals built in. It has companies, people, deals on a pipeline board and an activity timeline. Each account also has an Intent tab with five public signals (hiring, funding, tech stack, news, site changes) and a score from 0 to 100. Every signal is fetched on demand and shows its price before it runs.
+An open-source CRM for a sales team of one to five people, with buying signals built in. It has companies, people, deals on a pipeline board, an activity timeline and a shared team workspace. Each account also has an Intent tab with five public signals (hiring, funding, tech stack, news, site changes) and a score from 0 to 100. Every signal is fetched on demand and shows its price before it runs.
 
 It runs on Next.js and Supabase (auth and Postgres), deploys to Vercel, and gets its data from [looot](https://looot.ai): one key and one prepaid balance for 2,500+ data API endpoints. This project is built on looot. It is not the looot dashboard.
 
@@ -26,7 +26,7 @@ It runs on Next.js and Supabase (auth and Postgres), deploys to Vercel, and gets
 
 A CRM seat (the Pipedrive, HubSpot Starter, Attio or folk kind) plus a separate enrichment and intent subscription (the Apollo or Common Room kind). In those products the intent data is a second plan or an upgrade, and none shows what one refresh costs. Here there is no data plan. A full refresh of one account is about $0.02 in looot calls, enriching one contact with email, verification and phone is about $0.05, and a failed call costs nothing.
 
-What you give up: no email sequences, no dialer, no custom objects, no reports, no shared team workspace and no scheduled refresh. See [Status](#status).
+What you give up: no email sequences, no dialer, no custom objects, no reports and no scheduled refresh. See [Status](#status).
 
 ## What you need
 
@@ -47,7 +47,7 @@ With no browser (CI, a server), create the token in Settings > Agent tokens and 
 git clone https://github.com/loootai/looot-crm && cd looot-crm && npm install --ignore-scripts && npm run demo
 ```
 
-Open http://localhost:3217. Demo mode needs no Supabase project and no looot token. It runs on seeded data for a made-up seller of dock scheduling software: 14 companies, 41 people, 17 deals and 60 signals, with every date stored as an offset from now so it does not go stale. All company names are invented and every domain ends in `.example`. A "Demo data" badge sits in the top bar. Paid actions show the same quote as the real app, then play a simulated run, and the button says "Run (demo, no charge)". Changes last until the server restarts.
+Open http://localhost:3217. Demo mode needs no Supabase project and no looot token. It runs on seeded data for a made-up seller of dock scheduling software: 14 companies, 41 people, 20 deals on two pipelines (Sales and Partnerships) and 60 signals, with every date stored as an offset from now so it does not go stale. All company names are invented and every domain ends in `.example`. A "Demo data" badge sits in the top bar. Paid actions show the same quote as the real app, then play a simulated run, and the button says "Run (demo, no charge)". Changes last until the server restarts.
 
 The only outside request in demo mode is the free price read from `api.looot.ai`. Set `LOOOT_OFFLINE=1` to skip it and use the saved prices.
 
@@ -81,6 +81,7 @@ npm run dev
 | `BULK_MAX_RECORDS` | no | The most records one bulk action may touch. Default 50 | Your choice |
 | `NEXT_PUBLIC_DEMO` | no | `1` turns on demo mode | Set by `npm run demo` |
 | `LOOOT_OFFLINE` | no | `1` skips the price read and uses the saved prices | Your choice |
+| `MCP_ALLOWED_REDIRECT_HOSTS` | no | Comma separated hosts an app connecting through [MCP](#mcp) may send you back to. Default `claude.ai,claude.com,localhost,127.0.0.1` | Your choice |
 
 Start with **Import CSV** on the Companies page. The repo ships `examples/companies.example.csv` (3 companies, 3 contacts, fake `.example` domains). Pick it, check that the columns map to name, domain, first name, last name, title, email and LinkedIn, and import. Import is free, skips duplicate domains, and takes up to 2,000 rows. A test (`src/lib/csv.test.ts`) checks that this file maps and imports as 3 companies and 3 contacts.
 
@@ -103,7 +104,7 @@ Then open a company, go to the Intent tab and press Refresh on one signal. The q
 The app uses Supabase Auth (magic link and Google) and a Postgres database. There is no local Docker stack in these steps.
 
 1. Create a project in the Supabase dashboard. In Project Settings, API, copy the project URL into `NEXT_PUBLIC_SUPABASE_URL` and the anon key into `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local`.
-2. Apply the schema. There are two migrations, `supabase/migrations/20261009000000_init.sql` and `supabase/migrations/20261011000000_period_budget.sql` (the daily and monthly budget columns, the `budget_reservations` table and its functions, additive). Either link and push from a clone of this repo:
+2. Apply the schema. There are four migrations: `supabase/migrations/20261009000000_init.sql`, `supabase/migrations/20261011000000_period_budget.sql` (the daily and monthly budget columns, the `budget_reservations` table and its functions, additive), `supabase/migrations/20261016000000_team_workspaces.sql` (team workspaces, see [Teams](#teams)) and `supabase/migrations/20261016100000_pipelines.sql` (several pipelines with their own stages, see [Pipelines](#pipelines)). Either link and push from a clone of this repo:
 
    ```bash
    npx supabase@2.118.0 login
@@ -111,7 +112,7 @@ The app uses Supabase Auth (magic link and Google) and a Postgres database. Ther
    npx supabase@2.118.0 db push
    ```
 
-   Or open the SQL editor in the Supabase dashboard, paste each file in order and run it. If you already run 0.1.4, apply only `20261011000000_period_budget.sql` before you deploy 0.1.5. Without it paid actions fail with a missing function error and make no call.
+   Or open the SQL editor in the Supabase dashboard, paste each file in order and run it. If you already run 0.1.4, apply only `20261011000000_period_budget.sql` before you deploy 0.1.5. Without it paid actions fail with a missing function error and make no call. If you already run 0.1.5, apply `20261016000000_team_workspaces.sql` and `20261016100000_pipelines.sql` and deploy this version together: the budget functions now take the workspace id, so the old app and the new database do not work with each other.
 3. In Supabase, Authentication, URL Configuration, add these redirect URLs. The app sends users to `<origin>/auth/callback` after the magic link or Google sign-in (`src/app/auth/callback/route.ts`).
    - `http://localhost:3000/auth/callback` for `npm run dev`
    - `https://<your-app-domain>/auth/callback` for the deployed app
@@ -244,17 +245,112 @@ The app calls jobs, not pinned endpoints, so looot picks the provider and the re
 
 `LOOOT_TOKEN` is read in `src/lib/looot.ts`, `src/lib/api.ts` and the balance route, all of which import `server-only`. There is no `NEXT_PUBLIC_` copy. The build was checked with a fake token: `grep -r` over `.next/static` does not find the value. The variable name does appear there once, inside the error message "LOOOT_TOKEN is not set on the server".
 
+## Teams
+
+Everyone in a workspace works on the same companies, people, deals, signals and budget.
+
+- The first sign-in of someone with no invitation creates a workspace with them as its owner. A team of one works exactly as before.
+- The owner invites people by email in Settings, Team. The invitation is claimed the next time that email signs in, once the email is confirmed. The email must also be on `LOOOT_CRM_ALLOWED_EMAILS` or `LOOOT_CRM_ALLOWED_DOMAINS`. Settings warns when it is not.
+- A person belongs to one workspace. Inviting someone whose own workspace is still empty moves them. Someone whose workspace has data, or other members, has to clear it first.
+- Only the owner invites, removes, renames the workspace, changes the daily and monthly budget and deletes all workspace data. A database trigger enforces the budget rule as well as the app.
+- A removed member's rows stay with the team. If they sign in again they start a new, empty workspace.
+- `owner_id` on a row now means the person who created it.
+
+## Pipelines
+
+A workspace can run several boards, each with its own stages: sales, partnerships, sponsors, applicants, or anything else.
+
+- Settings, Pipelines: add one from a template (Sales, Partnerships, Sponsors, Applicants), then rename, add, reorder or remove stages. Each stage is open, closes as won, or closes as lost. Moving a deal to a closing stage asks for the reason, as Won and Lost did before.
+- A pipeline is about companies or about people. A pipeline of people puts one person on each card, for example an applicant, with no company needed.
+- A pipeline can carry a deal value in its own currency, or none (partnerships usually have none).
+- The board has a pipeline switcher. Today counts money in the first pipeline that tracks an amount, so amounts in different currencies are never added together. The Companies table shows each company's open deal that is furthest along, from any pipeline.
+- A stage that still has deals cannot be removed, and a pipeline with deals cannot be deleted. The database enforces both: a deal's stage is a foreign key to a stage of its own pipeline.
+- Upgrading: every workspace with deals gets a Sales pipeline with the six 0.1.x stages, and its deals move into it unchanged. A deal inserted without a pipeline (an older client, an import) goes to the first pipeline.
+
+## MCP
+
+The CRM is also an MCP server, so Claude (or another MCP client) can read and update it for you: "who at Harborline have we contacted?", "move Calder Ridge to In talks", "add a note to Lowmoor Timber". Claude acts as you, with your sign-in, and sees exactly what you see in the app.
+
+Connect it: in Claude, Settings, Connectors, add a custom connector with the URL `https://<your-app-domain>/mcp`. Claude opens a sign-in in your browser: sign in to the CRM as usual, check the app and where it sends you back, and approve.
+
+Tools: `search`, `get_company`, `get_person`, `list_pipelines` and `list_cards` read. `move_card`, `add_note`, `set_next_step`, `add_person`, `add_company` and `add_card` write, through the same code as the app, so a move writes the same stage-change history as dragging the card.
+
+Set up, once per Supabase project, in the Supabase dashboard:
+
+1. Authentication, OAuth Server: turn on the OAuth 2.1 server.
+2. Allow dynamic client registration, so Claude can register itself the first time it connects.
+3. Set the authorization path to `/oauth/consent`, on your app's URL (the Site URL from the sign-in steps above).
+4. Optional: set `MCP_ALLOWED_REDIRECT_HOSTS` if you connect a client other than Claude, and redeploy.
+
+The endpoint is stateless Streamable HTTP. It tells clients where to sign in through `/.well-known/oauth-protected-resource` (RFC 9728), which points at the Supabase project's Auth server (the project URL followed by `/auth/v1`). In demo mode it needs no sign-in, so you can try it locally: `npm run demo`, then point an MCP client at `http://localhost:3217/mcp`.
+
+Security:
+
+- Every call is checked again: the access token must be valid, and its email must be on `LOOOT_CRM_ALLOWED_EMAILS` or `LOOOT_CRM_ALLOWED_DOMAINS`, before any data is read. Removing someone from the allow-list cuts their connected apps off at the next call.
+- Queries run as the signed-in person with row level security, never with a service key, so an app sees only that person's workspace.
+- Access tokens are short-lived Supabase tokens, refreshed by the OAuth server. Taking someone off the allow-list is the way to cut them off.
+- The consent page only approves apps that send you back to a host on `MCP_ALLOWED_REDIRECT_HOSTS`, and shows that host on every request. Anything else can only be denied.
+- No destructive or paid tools: nothing deletes, nothing changes the team, the budget or settings, and nothing runs a paid looot action. Those stay in the app, behind its quote and budget.
+- Every write records an activity owned by the signed-in person and tagged `via: "mcp"`, so the history shows who changed what and that it came through an app.
+- Text in the CRM (notes, names, descriptions, anything imported) is data. A note that says "ignore your instructions" is still just a note: treat what the tools return as content, not as instructions, and review what an agent proposes to change.
+
+## Scheduled jobs
+
+Three Vercel Cron jobs (in `vercel.json`) keep the intent data fresh without anyone clicking. Each posts what it found to a Slack channel.
+
+| Route | When (UTC) | What it does |
+| --- | --- | --- |
+| `/api/cron/signals?step=news` | Mon and Thu 07:00 | News check for the open cards on `CRON_SIGNAL_BOARDS`, narrowed by `CRON_NEWS_KEYWORDS` (security news by default). One `news.search` per company, the least recently checked first, up to `CRON_MAX_COMPANIES`. |
+| `/api/cron/signals?step=hiring` | Mon 07:30 | Hiring check for the open cards on `CRON_HIRING_BOARDS`: open roles at the company whose title contains one of `CRON_HIRING_KEYWORDS` (security roles by default). |
+| `/api/cron/prospects` | Mon 08:00 | One people search (Icypeas) for people with `CRON_PROSPECT_TITLES` in `CRON_PROSPECT_COUNTRY`, optionally only in `CRON_PROSPECT_INDUSTRIES`. Skipped until a country is set. Up to `CRON_PROSPECTS_PER_RUN` people new to the CRM become cards at the first open stage of `CRON_PROSPECT_BOARD`, with the next step "`CRON_PROSPECT_REVIEWER`: review prospect (pick or decline)". No email is looked up. |
+
+The checks use the same paid path as the Intent tab: every call is quoted, capped, reserved against the workspace's daily and monthly budget, and shown on the Spend page. On top of that a scheduled run never spends more than `CRON_RUN_CAP_USD` (default $0.50), all scheduled runs together never more than `CRON_WEEK_CAP_USD` in 7 days (default $1.50), and a run is skipped when the looot balance cannot cover its estimate. A repeated call on the same day (news) or week (hiring, prospects) replays the stored run and spends nothing. Headlines and roles already seen are not reported again. Signals land on each company's Intent tab and count in its score; security headlines are tagged `security`.
+
+Set up:
+
+1. A bot user for the jobs, so they run under row level security like a person and need no service key. In Supabase, Authentication, Users, add a user with an email and a strong password (for example `crm-bot@your-domain`) and tick Auto Confirm User, then invite that email from Settings, Team. The first scheduled run signs in as the bot and claims the invitation. Invite it before the first run, and set `CRON_WORKSPACE_ID`: a bot with no invitation would otherwise get an empty workspace of its own, which that check refuses. The bot does not need to be on the allow-list: it never signs in to the app.
+2. On Vercel: `CRON_SECRET` (16+ random characters; Vercel sends it as the bearer), `CRON_BOT_EMAIL`, `CRON_BOT_PASSWORD`, `CRON_SLACK_WEBHOOK_URL` (a Slack incoming webhook), and the settings below that you want to change.
+3. Redeploy. To run one by hand: `curl -H "Authorization: Bearer $CRON_SECRET" https://<your-app-domain>/api/cron/signals?step=news`.
+
+The routes refuse every call while `CRON_SECRET` is unset, and any call without that exact bearer; a browser session does not open them.
+
+Settings (all optional). Lists are comma separated, or semicolon separated when the items hold commas, as some LinkedIn industries do.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `CRON_WORKSPACE_ID` | the bot's workspace | The workspace the jobs work in. The bot must be a member. |
+| `CRON_SIGNAL_BOARDS` | `Sales` | Company boards whose open cards get the news check. |
+| `CRON_HIRING_BOARDS` | `Sales` | Company boards whose open cards get the hiring check. |
+| `CRON_MAX_COMPANIES` | `40` | Companies checked per signal run. |
+| `CRON_NEWS_KEYWORDS` | `cybersecurity, breach, ransomware, data leak, CISO` | Words that narrow the news check, joined with OR. Add other languages here. |
+| `CRON_HIRING_KEYWORDS` | `security, cyber, CISO, SOC analyst` | A job title must contain one of these to count. |
+| `CRON_PROSPECT_COUNTRY` | unset (prospects skip) | Two-letter country code the prospect search looks in. |
+| `CRON_PROSPECT_TITLES` | CISO and other head-of-security titles | Job titles the prospect search looks for. |
+| `CRON_PROSPECT_INDUSTRIES` | unset (any industry) | LinkedIn company industries to keep. |
+| `CRON_PROSPECT_LOCAL_ONLY` | off | `1` keeps only organisations based in the country (a site on its country domain or an address there), not foreign ones with local staff. Local ones are always ranked first. |
+| `CRON_PROSPECT_BOARD` | `Sales` | The company board new prospects go to, at its first open stage. |
+| `CRON_PROSPECT_REVIEWER` | `Team` | Who reviews new prospects; goes into the card's next step. |
+| `CRON_PROSPECT_CARD_NAME` | `Prospect` | The name new prospect cards get. |
+| `CRON_PROSPECTS_PER_RUN` | `10` (max 25) | Prospects added per run. |
+| `CRON_OPENER_PITCH` | unset | One sentence about what you offer, added to every suggested opener in Slack. |
+| `CRON_OPENER_SUFFIX` | unset | Appended after the pitch, e.g. an event's dates and venue. |
+| `CRON_RUN_CAP_USD` | `0.50` | The most one scheduled run may spend. |
+| `CRON_WEEK_CAP_USD` | `1.50` | The most all scheduled runs may spend in 7 days. |
+
+In Slack, a run lists only headlines that name the company, one per company, cards on the first board of `CRON_SIGNAL_BOARDS` first; only those cards get an opener. Every headline stays on the company's Intent tab.
+
 ## Securing a deployment
 
 Versions before 0.1.4 let any signed-in Supabase user use the workspace. If your Supabase project allows open sign-ups (the default), a stranger could create an account, read the data, change settings and spend your `LOOOT_TOKEN`. Upgrade and set the allow-list.
 
-What is public: `/login`, `/auth/callback` (the sign-in landing), `/setup` and `/not-authorised` (static messages), and static assets. Everything else is private: every page, `/api/quote`, `/api/actions`, `/api/actions/[key]`, `/api/balance`, `/api/export`, `/api/import` and every server action. An unlisted path is private. The app has no webhook or cron route.
+What is public: `/login`, `/auth/callback` (the sign-in landing), `/setup` and `/not-authorised` (static messages), and static assets. Everything else is private: every page, `/api/quote`, `/api/actions`, `/api/actions/[key]`, `/api/balance`, `/api/export`, `/api/import` and every server action. An unlisted path is private. The `/api/cron/*` routes are not sessions at all: they need the `CRON_SECRET` bearer (see [Scheduled jobs](#scheduled-jobs)).
 
 How access works:
 
 - Set `LOOOT_CRM_ALLOWED_EMAILS` (and optionally `LOOOT_CRM_ALLOWED_DOMAINS`). The server checks it in the proxy, in each route handler and in each server action. The email must also be confirmed in Supabase.
 - With no allow-list the app is closed. Signed-in users see the setup page and the APIs answer 503. A signed-in user not on the list sees "not authorised for this workspace" and the APIs answer 403.
-- The allow-list is the only gate for sharing your `LOOOT_TOKEN`: every allowed user spends from the same looot balance. Each user's rows stay separate through row level security (`npm run test:rls`), but the token and the server limits `PER_ACTION_MAX_USD` and `BULK_MAX_RECORDS` are shared.
+- The allow-list is the only gate for sharing your `LOOOT_TOKEN`: every allowed user spends from the same looot balance. Rows stay inside their workspace through row level security (`npm run test:rls`), and the daily and monthly budget is per workspace, but the token and the server limits `PER_ACTION_MAX_USD` and `BULK_MAX_RECORDS` are shared by every workspace on the deployment.
+- Two gates apply to a team member: the server allow-list decides who can use the app at all, and workspace membership in the database decides whose rows they see. An invitation alone does not let anyone in, and being on the allow-list alone shows nobody else's data.
 - Spending: the limits are the per-action cap (the server limit and the ceiling in Settings, which a caller can only lower) and the workspace daily and monthly budget, which a run request cannot change at all. Every run rebuilds its plan from record ids on the server (the same plan `/api/quote` shows), and the idempotency key of each looot call is derived from the action key and the step, so a retry never charges twice. Each user gets `SPEND_RATE_LIMIT_PER_MIN` calls a minute on the quote and action routes.
 - The rate limit lives in memory, so each server instance counts for itself. On a host that runs several instances (several Vercel function instances, several containers) a user gets `SPEND_RATE_LIMIT_PER_MIN` calls a minute from each one. Treat it as a per-instance brake. The hard limit is the budget in your database. Before each paid call the `reserve_budget` function locks your `settings` row, adds spent (`runs`) and reserved (`budget_reservations`) and writes the reservation in the same transaction. Actions that start at the same moment on different instances queue on that lock, so what they hold together never passes the budget. Nothing about the budget sits in memory. Before 0.1.5 there was no total across actions: only the per-instance rate limit and the token balance bounded a day or a month of spend. That is fixed.
 - What the budget does not cover. A call that costs more than its cap cannot happen, because looot enforces the cap, but a reservation released after 24 hours for a run that never reported back may have cost money that no row records. And the budget only limits calls this app makes. **The looot token balance is the final limit.** Create a dedicated token for this app and fund it with only what you are willing to spend. If the app, its database or a signed-in user is ever compromised, that balance is all an attacker can spend.
@@ -265,9 +361,9 @@ How access works:
 
 ## Data model and security
 
-The migrations create 12 tables: `companies`, `contacts`, `deals`, `deal_contacts`, `activities`, `signals`, `signal_baselines`, `score_history`, `actions`, `runs`, `settings` and `budget_reservations`. Every table has `owner_id uuid default auth.uid()`, row level security enabled and forced, and four policies for the `authenticated` role with `owner_id = (select auth.uid())`. The `anon` role can read nothing. The app uses the anon key with the user's session only. There is no service role key.
+The migrations create 16 tables. Fourteen hold data: `pipelines`, `pipeline_stages`, `companies`, `contacts`, `deals`, `deal_contacts`, `activities`, `signals`, `signal_baselines`, `score_history`, `actions`, `runs`, `settings` and `budget_reservations`. Each has `workspace_id uuid default public.current_workspace()`, `owner_id uuid default auth.uid()` (who created the row, null if that user is deleted), row level security enabled and forced, and four policies for the `authenticated` role with `workspace_id = (select public.current_workspace())`. An insert must also carry the caller's own `owner_id`. Every reference between data tables is a composite foreign key that includes `workspace_id`, so a row can only point at rows of its own workspace. The other two tables, `workspaces` and `workspace_members`, are readable by members and changed only through `join_workspace()`, `invite_member()` and `remove_member()`. The `anon` role can read nothing. The app uses the anon key with the user's session only. There is no service role key.
 
-`npm run test:rls` proves it on a throwaway local Postgres started with `initdb` and `pg_ctl` (no Docker, no Supabase project). A second user sees, updates and deletes zero rows of the first user in all 12 tables, cannot insert a row with a forged owner, and cannot point a row at another owner's company. It also checks that an `actions` row with actual above max is refused. The script prints "SKIPPED" when PostgreSQL is not installed.
+`npm run test:rls` proves it on a throwaway local Postgres started with `initdb` and `pg_ctl` (no Docker, no Supabase project). A second user sees, updates and deletes zero rows of the first user in all 14 data tables, cannot insert a row with a forged owner or workspace, and cannot point a row at another workspace's company. A third user invited by the first sees and edits the first user's rows, cannot change the budget or invite anyone, and loses access when removed. An unconfirmed email cannot claim an invitation. It also checks that an `actions` row with actual above max is refused, that a deal cannot sit in a stage of another pipeline or have neither a company nor a person, and that a stage with deals cannot be deleted. It upgrades a database with 0.1.5 data to team workspaces and checks that every row and the budget carried over and that existing deals landed in the Sales pipeline. The script prints "SKIPPED" when PostgreSQL is not installed.
 
 ## Troubleshooting
 
@@ -294,7 +390,8 @@ How to file an issue. Open one at https://github.com/loootai/looot-crm/issues wi
 - `people.search` passes `job_title` and `limit` as sent, and only some providers use those names. The app also filters returned people by your title keywords and says how many matched.
 - The cheapest `company.technographics` provider returns category counts, not named technologies. The added and removed lists need named technologies. Otherwise the section says the provider returned categories only.
 - `company.funding` has three providers and two of them do not key on a domain. If the run fails on input, the section shows the error at $0. Funding news still arrives through `news.search`.
-- One workspace per sign-in. A shared team workspace needs a members table and new policies.
+- One workspace per person. Someone who works in two teams needs two emails.
+- Two roles, owner and member. There is no way to hand the owner role to someone else in the app yet.
 - No scheduled refresh. Intent is checked when you click.
 - No email sending, no sequences, no dialer, no sync to another CRM. CSV import and export instead.
 - No contrast audit tool was run. Colors were picked to pass AA and checked by eye in both themes.

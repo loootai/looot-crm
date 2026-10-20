@@ -8,7 +8,7 @@ export const KIND_CAPS: Record<SignalKind, number> = { funding: 30, hiring: 24, 
 export const HALF_LIFE_DAYS = 30;
 export const WINDOW_DAYS = 90;
 const DAY_MS = 86_400_000;
-const TAGGED_NEWS = new Set(["funding", "launch", "leadership", "partnership"]);
+const TAGGED_NEWS = new Set(["security", "funding", "launch", "leadership", "partnership"]);
 
 /** Points a new signal of this kind is worth before decay. */
 export function basePoints(kind: SignalKind, tag: string | null | undefined, w: Weights = DEFAULT_WEIGHTS): number {

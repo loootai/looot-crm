@@ -31,7 +31,16 @@ function toItem(o: Obj): Item | null {
   const url = pick(o, URL_KEYS);
   const title = pick(o, TITLE_KEYS);
   if (!url || !title || !/^https?:\/\//i.test(url)) return null;
-  return { url, title, date: pick(o, DATE_KEYS), source: pick(o, SOURCE_KEYS), company: pick(o, COMPANY_KEYS) };
+  return { url, title, date: pick(o, DATE_KEYS) ?? epochDate(o), source: pick(o, SOURCE_KEYS), company: pick(o, COMPANY_KEYS) };
+}
+
+/** Some providers give the date as Unix seconds (createdUtc). Read as an ISO date. */
+function epochDate(o: Obj): string | undefined {
+  for (const k of ["createdUtc", "created_utc", "timestamp"]) {
+    const v = o[k];
+    if (typeof v === "number" && v > 1e9 && v < 1e11) return new Date(v * 1000).toISOString();
+  }
+  return undefined;
 }
 
 /**
@@ -98,13 +107,14 @@ export function changedLines(before: string, after: string, max = 3): string[] {
 }
 
 const TAGS: [string, RegExp][] = [
+  ["security", /\b(nis ?2|cyber|ciber|breach|ransomware|hack(ed|ers?)?\b|ataque informático|fuga de dados|data leak|ciso\b)/i],
   ["funding", /\b(raises?|raised|funding|series [a-f]\b|seed round|investment led by)/i],
   ["leadership", /\b(appoint(s|ed)?\b|names? .{0,40}\b(ceo|cto|cfo|coo|cmo|cro|chief|president|vp)\b|joins as|steps down|new (ceo|cto|cfo))/i],
   ["launch", /\b(launch(es|ed)?|introduc(es|ed)|unveil(s|ed)|releases?|rolls out)\b/i],
   ["partnership", /\b(partner(s|ship)?|teams up|integration with)\b/i],
 ];
 
-/** Tags a news headline: funding, leadership, launch, partnership or other. */
+/** Tags a news headline: security, funding, leadership, launch, partnership or other. */
 export function tagHeadline(title: string): string {
   for (const [tag, re] of TAGS) if (re.test(title)) return tag;
   return "other";

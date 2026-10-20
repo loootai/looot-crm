@@ -3,23 +3,24 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { cleanDomain } from "@/lib/format";
 import { contactTimeline, dealDetail, type DealDetail, type TimelineEntry } from "@/lib/queries";
-import { DEFAULT_SETTINGS, loadSettings } from "@/lib/runner";
-import { getSession, IS_DEMO, resolveGate, type Store } from "@/lib/store";
+import { DEFAULT_SETTINGS } from "@/lib/runner";
+import { getSession, IS_DEMO, resolveGate, type Session, type Store } from "@/lib/store";
 import { serverSupabase } from "@/lib/supabase/server";
-import { STAGE_LABEL, STAGES, TABLE_NAMES, type Stage } from "@/lib/types";
+import { createPipelineRows, loadPipelines, PIPELINE_TEMPLATES, stageKey, templateStages } from "@/lib/pipelines";
+import { ActivityInput, addActivityRow, ContactInput, createCompanyRow, createContactRow, createDealRow, DealInput, DealPatch, id, moveDealRow, text, updateDealRow, type Result } from "@/lib/records";
+import { TABLE_NAMES, type Stage, type TeamRefusal, type TeamResult } from "@/lib/types";
 
-export type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
+export type { Result };
 
-async function withStore<T = object>(fn: (store: Store) => Promise<Result<T>>): Promise<Result<T>> {
+async function withStore<T = object>(fn: (store: Store, session: Session) => Promise<Result<T>>): Promise<Result<T>> {
   const gate = await resolveGate();
   if (gate.kind === "setup") return { ok: false, error: "Set LOOOT_CRM_ALLOWED_EMAILS on the server first." };
   if (gate.kind === "denied") return { ok: false, error: "You are not authorised for this workspace." };
   if (gate.kind !== "ok") return { ok: false, error: "Sign in first." };
   const session = gate.session;
   try {
-    const out = await fn(session.store);
+    const out = await fn(session.store, session);
     if (out.ok) revalidatePath("/", "layout");
     return out;
   } catch (e) {
@@ -27,20 +28,9 @@ async function withStore<T = object>(fn: (store: Store) => Promise<Result<T>>): 
   }
 }
 
-const id = z.string().min(1).max(80);
-const text = (max: number) => z.string().trim().max(max);
 
 export async function createCompany(input: { name: string; domain: string }): Promise<Result<{ id: string }>> {
-  return withStore<{ id: string }>(async (store) => {
-    const name = input.name.trim();
-    const domain = cleanDomain(input.domain);
-    if (!name) return { ok: false, error: "Enter the company name." };
-    if (!domain) return { ok: false, error: "Enter a domain such as example.com." };
-    const settings = await loadSettings(store);
-    const made = await store.insertIgnore("companies", [{ name, domain, watched_pages: settings.default_pages.map((p) => `https://${domain}${p}`) }], ["domain"]);
-    if (!made.length) return { ok: false, error: `${domain} is already in your companies.` };
-    return { ok: true, id: made[0].id };
-  });
+  return withStore<{ id: string }>((store) => createCompanyRow(store, input));
 }
 
 const CompanyPatch = z.object({ name: text(120).min(1), industry: text(120).nullable(), employees: z.number().int().min(0).max(5_000_000).nullable(), hq: text(120).nullable(), description: text(600).nullable() }).partial();
@@ -63,15 +53,8 @@ export async function deleteRecords(table: "companies" | "contacts" | "deals", i
   });
 }
 
-const ContactInput = z.object({ company_id: id.nullable(), first_name: text(80).min(1), last_name: text(80), title: text(120).nullable(), email: z.string().trim().email().max(200).nullable().or(z.literal("").transform(() => null)), linkedin_url: text(300).nullable() });
-
 export async function createContact(input: z.input<typeof ContactInput>): Promise<Result<{ id: string }>> {
-  return withStore<{ id: string }>(async (store) => {
-    const p = ContactInput.safeParse(input);
-    if (!p.success) return { ok: false, error: "Enter a first name and a valid email, or leave the email empty." };
-    const [row] = await store.insert("contacts", [{ ...p.data, linkedin_url: p.data.linkedin_url || null, title: p.data.title || null, source: "manual" }]);
-    return { ok: true, id: row.id };
-  });
+  return withStore<{ id: string }>((store) => createContactRow(store, input));
 }
 
 const CandidateInput = z.array(z.object({ first_name: text(80), last_name: text(80), title: text(160).nullable(), linkedin_url: text(300).nullable(), company_id: id.nullable() })).min(1).max(25);
@@ -90,72 +73,118 @@ export async function addCandidates(input: z.input<typeof CandidateInput>): Prom
   });
 }
 
-const DealInput = z.object({ company_id: id, name: text(160).min(1), amount: z.number().min(0).max(1e10), stage: z.enum(STAGES), close_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable() });
-
 export async function createDeal(input: z.input<typeof DealInput>): Promise<Result<{ id: string }>> {
+  return withStore<{ id: string }>((store) => createDealRow(store, input));
+}
+
+/** Moves a deal to a stage of its pipeline (and a position inside it) and writes a stage-change activity when the stage differs. */
+export async function moveDeal(dealId: string, stage: Stage, position?: number, reason?: string): Promise<Result> {
+  return withStore((store) => moveDealRow(store, dealId, stage, position, reason));
+}
+
+/* ---------- Pipelines ---------- */
+
+const CURRENCY = z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/);
+const StageInput = z.object({ key: z.string().regex(/^[a-z0-9_]{1,40}$/).nullable(), label: text(40).min(1), kind: z.enum(["open", "won", "lost"]) });
+const PipelineInput = z.object({ name: text(60).min(1), template: z.string().max(40), currency: CURRENCY });
+
+/** Adds a pipeline from a template. The stages can be changed afterwards. */
+export async function createPipeline(input: z.input<typeof PipelineInput>): Promise<Result<{ id: string }>> {
   return withStore<{ id: string }>(async (store) => {
-    const p = DealInput.safeParse(input);
-    if (!p.success) return { ok: false, error: "Enter a deal name, a company and an amount." };
-    const inStage = await store.all("deals", { stage: p.data.stage });
-    const position = inStage.reduce((m, d) => Math.max(m, d.position), 0) + 1000;
-    const now = new Date().toISOString();
-    const [row] = await store.insert("deals", [{ company_id: p.data.company_id, name: p.data.name, stage: p.data.stage, amount_cents: Math.round(p.data.amount * 100), close_date: p.data.close_date, position, stage_changed_at: now }]);
-    await store.insert("activities", [{ kind: "stage_change", company_id: p.data.company_id, deal_id: row.id, meta: { from: null, to: p.data.stage } }]);
-    return { ok: true, id: row.id };
+    const p = PipelineInput.safeParse(input);
+    if (!p.success) return { ok: false, error: "Enter a name and a three-letter currency code such as EUR." };
+    const t = PIPELINE_TEMPLATES.find((x) => x.id === p.data.template);
+    if (!t) return { ok: false, error: "Pick a template." };
+    const existing = await loadPipelines(store);
+    const made = await createPipelineRows(store, { name: p.data.name, subject: t.subject, trackAmount: t.trackAmount, currency: p.data.currency, stages: templateStages(t), position: existing.reduce((m, x) => Math.max(m, x.position), 0) + 1000 });
+    return made ? { ok: true, id: made.id } : { ok: false, error: `There is already a pipeline called ${p.data.name}.` };
   });
 }
 
-/** Moves a deal to a stage (and a position inside it) and writes a stage-change activity when the stage differs. */
-export async function moveDeal(dealId: string, stage: Stage, position?: number, reason?: string): Promise<Result> {
+const PipelinePatch = z.object({ name: text(60).min(1), track_amount: z.boolean(), currency: CURRENCY, subject: z.enum(["company", "person"]) }).partial();
+
+export async function updatePipeline(pipelineId: string, patch: z.input<typeof PipelinePatch>): Promise<Result> {
   return withStore(async (store) => {
-    if (!STAGES.includes(stage)) return { ok: false, error: "Unknown stage." };
-    const deal = await store.get("deals", dealId);
-    if (!deal) return { ok: false, error: "Deal not found." };
-    let pos = position;
-    if (pos === undefined || !Number.isFinite(pos)) {
-      const inStage = await store.all("deals", { stage });
-      pos = inStage.reduce((m, d) => Math.max(m, d.position), 0) + 1000;
+    const p = PipelinePatch.safeParse(patch);
+    if (!p.success) return { ok: false, error: "Check the name and the currency code." };
+    const current = await store.get("pipelines", pipelineId);
+    if (!current) return { ok: false, error: "Pipeline not found." };
+    if (p.data.subject && p.data.subject !== current.subject && (await store.all("deals", { pipeline_id: pipelineId })).length) {
+      return { ok: false, error: "This pipeline has deals, so what its cards are about cannot change." };
     }
-    const from = deal.stage;
-    const changed = from !== stage;
-    const closed = stage === "won" || stage === "lost";
-    await store.update("deals", dealId, {
-      stage,
-      position: pos,
-      ...(changed ? { stage_changed_at: new Date().toISOString(), closed_reason: closed ? (reason?.trim().slice(0, 200) || null) : null } : {}),
-    });
-    if (changed) {
-      await store.insert("activities", [
-        { kind: "stage_change", company_id: deal.company_id, deal_id: deal.id, body: closed && reason ? reason.trim().slice(0, 200) : null, meta: { from, to: stage, label: `${STAGE_LABEL[from]} to ${STAGE_LABEL[stage]}` } },
-      ]);
+    if (p.data.name && p.data.name !== current.name && (await store.all("pipelines", { name: p.data.name })).length) {
+      return { ok: false, error: `There is already a pipeline called ${p.data.name}.` };
+    }
+    await store.update("pipelines", pipelineId, p.data);
+    return { ok: true };
+  });
+}
+
+/**
+ * Saves the stages of a pipeline in the order given. A stage with a key is kept (label and kind can
+ * change), one without is added, and a stage left out is deleted, which is refused while deals are in it.
+ */
+export async function savePipelineStages(pipelineId: string, input: z.input<typeof StageInput>[]): Promise<Result> {
+  return withStore(async (store) => {
+    const p = z.array(StageInput).min(1).max(12).safeParse(input);
+    if (!p.success) return { ok: false, error: "A pipeline has 1 to 12 stages, each with a name of up to 40 characters." };
+    if (!p.data.some((s) => s.kind === "open")) return { ok: false, error: "Keep at least one open stage." };
+    const labels = p.data.map((s) => s.label.toLowerCase());
+    if (new Set(labels).size !== labels.length) return { ok: false, error: "Two stages have the same name." };
+    const [pipeline, rows, deals] = await Promise.all([store.get("pipelines", pipelineId), store.all("pipeline_stages", { pipeline_id: pipelineId }), store.all("deals", { pipeline_id: pipelineId })]);
+    if (!pipeline) return { ok: false, error: "Pipeline not found." };
+    const keep = new Set(p.data.map((s) => s.key).filter(Boolean));
+    for (const gone of rows.filter((r) => !keep.has(r.key))) {
+      const n = deals.filter((d) => d.stage === gone.key).length;
+      if (n) return { ok: false, error: `${gone.label} still has ${n} ${n === 1 ? "deal" : "deals"}. Move ${n === 1 ? "it" : "them"} to another stage first.` };
+    }
+    const taken = new Set(rows.map((r) => r.key));
+    const byKey = new Map(rows.map((r) => [r.key, r]));
+    const removed = rows.filter((r) => !keep.has(r.key)).map((r) => r.id);
+    if (removed.length) await store.remove("pipeline_stages", removed);
+    for (const [i, s] of p.data.entries()) {
+      const position = (i + 1) * 1000;
+      const row = s.key ? byKey.get(s.key) : undefined;
+      if (row) await store.update("pipeline_stages", row.id, { label: s.label, kind: s.kind, position });
+      else await store.insert("pipeline_stages", [{ pipeline_id: pipelineId, key: stageKey(s.label, taken), label: s.label, kind: s.kind, position }]);
     }
     return { ok: true };
   });
 }
 
-const DealPatch = z.object({ name: text(160).min(1), amount: z.number().min(0).max(1e10), close_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), next_step: text(200).nullable(), next_step_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable() }).partial();
+/** Moves a pipeline one place up or down in the switcher. */
+export async function movePipeline(pipelineId: string, direction: "up" | "down"): Promise<Result> {
+  return withStore(async (store) => {
+    const all = await loadPipelines(store);
+    const i = all.findIndex((p) => p.id === pipelineId);
+    const j = direction === "up" ? i - 1 : i + 1;
+    if (i === -1 || j < 0 || j >= all.length) return { ok: true };
+    [all[i], all[j]] = [all[j], all[i]];
+    // Renumber all of them, so two pipelines with the same position still swap.
+    for (const [k, x] of all.entries()) if (x.position !== (k + 1) * 1000) await store.update("pipelines", x.id, { position: (k + 1) * 1000 });
+    return { ok: true };
+  });
+}
+
+/** Deletes an empty pipeline. The last one stays, so the board always has stages. */
+export async function deletePipeline(pipelineId: string): Promise<Result> {
+  return withStore(async (store) => {
+    const all = await loadPipelines(store);
+    if (all.length <= 1) return { ok: false, error: "Keep at least one pipeline." };
+    const n = (await store.all("deals", { pipeline_id: pipelineId })).length;
+    if (n) return { ok: false, error: `This pipeline still has ${n} ${n === 1 ? "deal" : "deals"}. Delete or move ${n === 1 ? "it" : "them"} first.` };
+    const stages = await store.all("pipeline_stages", { pipeline_id: pipelineId });
+    await store.remove("pipeline_stages", stages.map((s) => s.id));
+    return (await store.remove("pipelines", [pipelineId])) ? { ok: true } : { ok: false, error: "Pipeline not found." };
+  });
+}
 
 export async function updateDeal(dealId: string, patch: z.infer<typeof DealPatch>): Promise<Result> {
-  return withStore(async (store) => {
-    const p = DealPatch.safeParse(patch);
-    if (!p.success) return { ok: false, error: "That value is not valid." };
-    const { amount, ...rest } = p.data;
-    const row = await store.update("deals", dealId, { ...rest, ...(rest.next_step === "" ? { next_step: null } : {}), ...(amount === undefined ? {} : { amount_cents: Math.round(amount * 100) }) });
-    return row ? { ok: true } : { ok: false, error: "Deal not found." };
-  });
+  return withStore((store) => updateDealRow(store, dealId, patch));
 }
 
-const ActivityInput = z.object({ kind: z.enum(["note", "call", "meeting", "task"]), body: text(4000).min(1), company_id: id.nullable(), contact_id: id.nullable().optional(), deal_id: id.nullable().optional(), due_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional() });
-
 export async function addActivity(input: z.input<typeof ActivityInput>): Promise<Result> {
-  return withStore(async (store) => {
-    const p = ActivityInput.safeParse(input);
-    if (!p.success) return { ok: false, error: "Write something first." };
-    await store.insert("activities", [
-      { kind: p.data.kind, body: p.data.body, company_id: p.data.company_id, contact_id: p.data.contact_id ?? null, deal_id: p.data.deal_id ?? null, due_at: p.data.kind === "task" && p.data.due_at ? `${p.data.due_at}T17:00:00.000Z` : null },
-    ]);
-    return { ok: true };
-  });
+  return withStore((store) => addActivityRow(store, input));
 }
 
 export async function setTaskDone(activityId: string, done: boolean): Promise<Result> {
@@ -194,9 +223,10 @@ export async function saveSettings(input: z.input<typeof SettingsInput>): Promis
   });
 }
 
-/** Deletes every row the signed-in user owns. The sign-in itself stays. */
+/** Deletes every row in the workspace. Owner only. The sign-ins and the members stay. */
 export async function deleteAllData(confirm: string): Promise<Result> {
-  return withStore(async (store) => {
+  return withStore(async (store, session) => {
+    if (session.workspace.role !== "owner") return { ok: false, error: "Only the workspace owner can delete all data." };
     if (confirm !== "delete") return { ok: false, error: "Type delete to confirm." };
     for (const t of [...TABLE_NAMES].reverse()) {
       const rows = await store.all(t);
@@ -204,6 +234,28 @@ export async function deleteAllData(confirm: string): Promise<Result> {
     }
     return { ok: true };
   });
+}
+
+const TEAM_ERRORS: Record<TeamRefusal, string> = {
+  invalid: "Enter a valid email address.",
+  already: "That email is already in this workspace.",
+  has_workspace: "That person already works in another workspace with data in it. They need to delete that data first, or use another email.",
+  self: "You cannot remove yourself.",
+  not_found: "That email is not in this workspace.",
+  forbidden: "Only the workspace owner can change the team.",
+};
+const team = (r: TeamResult): Result => (r.ok ? { ok: true } : { ok: false, error: TEAM_ERRORS[r.reason] });
+
+export async function inviteMember(email: string): Promise<Result> {
+  return withStore(async (store) => team(await store.inviteMember(z.string().max(254).catch("").parse(email))));
+}
+
+export async function removeMember(email: string): Promise<Result> {
+  return withStore(async (store) => team(await store.removeMember(z.string().max(254).catch("").parse(email))));
+}
+
+export async function renameWorkspace(name: string): Promise<Result> {
+  return withStore(async (store) => team(await store.renameWorkspace(z.string().max(200).catch("").parse(name))));
 }
 
 /** Read for the contact drawer. */
